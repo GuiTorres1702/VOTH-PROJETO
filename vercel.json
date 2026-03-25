@@ -4,6 +4,5 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "outputDirectory": "next-voth/.next",
-  "public": false,
-  "rootDirectory": "next-voth"
+  "public": false
 }
