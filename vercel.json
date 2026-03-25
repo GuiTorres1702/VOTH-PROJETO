@@ -1,8 +1,8 @@
 {
-  "buildCommand": "cd next-voth && npm run build",
-  "devCommand": "cd next-voth && npm run dev",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "outputDirectory": "next-voth/.next",
+  "outputDirectory": ".next",
   "public": false
 }
