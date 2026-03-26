@@ -444,10 +444,13 @@ export default function DashboardPage() {
       return Number.isNaN(d.getTime()) ? null : d;
     };
 
-    const rowsByProcess = new Map<string, Array<ScheduleOp & { startMs: number; endMs: number }>>();
+    const rowsByProcess = new Map<string, Array<ScheduleOp & { startMs: number; endMs: number; lane: number }>>();
+    const laneCountByProcess = new Map<string, number>();
     let minMs = Number.POSITIVE_INFINITY;
     let maxMs = 0;
 
+    // First pass: group ops and track horizon
+    const tempByProcess = new Map<string, Array<ScheduleOp & { startMs: number; endMs: number }>>();
     for (const op of scheduleOps) {
       const s = parseDate(op.start);
       const e = parseDate(op.end);
@@ -456,14 +459,36 @@ export default function DashboardPage() {
       const endMs = e.getTime();
       minMs = Math.min(minMs, startMs);
       maxMs = Math.max(maxMs, endMs);
-      const arr = rowsByProcess.get(op.process) ?? [];
+      const arr = tempByProcess.get(op.process) ?? [];
       arr.push({ ...op, startMs, endMs });
-      rowsByProcess.set(op.process, arr);
+      tempByProcess.set(op.process, arr);
     }
 
-    const processes = Array.from(rowsByProcess.keys()).sort((a, b) => a.localeCompare(b));
+    const processes = Array.from(tempByProcess.keys()).sort((a, b) => a.localeCompare(b));
+
+    // Second pass: assign lanes per process (interval partitioning)
     for (const p of processes) {
-      rowsByProcess.get(p)!.sort((a, b) => a.startMs - b.startMs);
+      const ops = (tempByProcess.get(p) ?? []).sort((a, b) => a.startMs - b.startMs);
+      const laneEnds: number[] = [];
+      const out: Array<ScheduleOp & { startMs: number; endMs: number; lane: number }> = [];
+      for (const op of ops) {
+        let lane = -1;
+        for (let i = 0; i < laneEnds.length; i++) {
+          if (laneEnds[i] <= op.startMs) {
+            lane = i;
+            break;
+          }
+        }
+        if (lane === -1) {
+          lane = laneEnds.length;
+          laneEnds.push(op.endMs);
+        } else {
+          laneEnds[lane] = op.endMs;
+        }
+        out.push({ ...op, lane });
+      }
+      rowsByProcess.set(p, out);
+      laneCountByProcess.set(p, Math.max(1, laneEnds.length));
     }
 
     const msPerDay = 24 * 60 * 60 * 1000;
@@ -496,6 +521,7 @@ export default function DashboardPage() {
     return {
       processes,
       rowsByProcess,
+      laneCountByProcess,
       startMs,
       endMs,
       days,
@@ -629,12 +655,20 @@ export default function DashboardPage() {
               {/* Left labels */}
               <div className="w-44 shrink-0 border-r border-slate-700">
                 <div className="h-10 px-3 flex items-center text-xs text-slate-400 border-b border-slate-700">PROCESSO</div>
-                <div className="max-h-[460px] overflow-y-auto">
-                  {ganttModel?.processes.map((p) => (
-                    <div key={`lbl-${p}`} className="h-10 px-3 flex items-center border-b border-slate-800 text-sm">
-                      <span className="truncate">{p}</span>
-                    </div>
-                  )) ?? (
+                <div className="max-h-[520px] overflow-y-auto">
+                  {ganttModel?.processes.map((p) => {
+                    const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
+                    const rowHeight = Math.max(40, 10 + lanes * 22);
+                    return (
+                      <div
+                        key={`lbl-${p}`}
+                        className="px-3 flex items-center border-b border-slate-800 text-sm"
+                        style={{ height: rowHeight }}
+                      >
+                        <span className="truncate">{p}</span>
+                      </div>
+                    );
+                  }) ?? (
                     <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>
                   )}
                 </div>
@@ -660,11 +694,13 @@ export default function DashboardPage() {
                   </div>
 
                   {/* Rows */}
-                  <div className="max-h-[460px] overflow-y-auto">
+                  <div className="max-h-[520px] overflow-y-auto">
                     {ganttModel?.processes.map((p) => {
                       const ops = ganttModel.rowsByProcess.get(p) ?? [];
+                      const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
+                      const rowHeight = Math.max(40, 10 + lanes * 22);
                       return (
-                        <div key={`row-${p}`} className="h-10 border-b border-slate-800 relative">
+                        <div key={`row-${p}`} className="border-b border-slate-800 relative" style={{ height: rowHeight }}>
                           {/* Grid vertical lines */}
                           <div className="absolute inset-0 flex pointer-events-none">
                             {ganttModel.dayLabels.map((_, idx) => (
@@ -683,14 +719,16 @@ export default function DashboardPage() {
                             const left = leftDays * ganttModel.dayWidth;
                             const width = widthDays * ganttModel.dayWidth;
                             const bg = ganttColorForProcess(p);
+                            const top = 6 + op.lane * 22;
 
                             return (
                               <div
                                 key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
-                                className="absolute top-1.5 h-7 rounded-md border border-black/10 shadow-sm cursor-pointer"
+                                className="absolute h-[18px] rounded-md border border-black/10 shadow-sm cursor-pointer"
                                 style={{
                                   left,
                                   width,
+                                  top,
                                   backgroundColor: bg,
                                   opacity: op.late ? 0.85 : 0.95
                                 }}
@@ -698,7 +736,7 @@ export default function DashboardPage() {
                                 onMouseLeave={() => setHoveredOp(null)}
                                 title={`${op.equipment} · OP ${op.order_id} · Seq ${op.seq}`}
                               >
-                                <div className="px-2 text-[11px] text-slate-900 font-semibold truncate leading-7">
+                                <div className="px-2 text-[11px] text-slate-900 font-semibold truncate leading-[18px]">
                                   {op.equipment || `OP ${op.order_id}`}
                                 </div>
                               </div>
