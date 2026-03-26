@@ -32,6 +32,30 @@ export type Process = {
   OrdemOtima: number;
 };
 
+type ScheduleOp = {
+  order_id: string;
+  equipment: string;
+  process: string;
+  seq: number;
+  deadline: string; // YYYY-MM-DD
+  start: string; // ISO-like
+  end: string; // ISO-like
+  duration: number; // hours
+  late?: boolean;
+};
+
+type ScheduleSummary = {
+  ordersTotal: number;
+  ordersDeliveredByJan2027: number;
+  deliveriesPctByJan2027: number;
+  makespanDate?: Date;
+  onTimeOrders: number;
+  lateOrders: number;
+  deliveriesByMonth: Array<{ month: string; count: number }>;
+  workloadByProcess: Array<{ process: string; hours: number; maxOverlap: number }>;
+  topBottleneck?: { process: string; hours: number; maxOverlap: number };
+};
+
 const colors: Record<string, string> = {
   'Alto impacto (gargalo crítico)': '#ef4444',
   'Médio impacto (atenção)': '#f59e0b',
@@ -47,6 +71,8 @@ const colorMap: Record<string, string> = {
 export default function DashboardPage() {
   const [processes, setProcesses] = useState<Process[]>([]);
   const [impactoFilter, setImpactoFilter] = useState<string>('all');
+  const [scheduleOps, setScheduleOps] = useState<ScheduleOp[]>([]);
+  const [scheduleSummary, setScheduleSummary] = useState<ScheduleSummary | null>(null);
 
   useEffect(() => {
     fetch('/processos_analisados.json')
@@ -67,6 +93,135 @@ export default function DashboardPage() {
         setProcesses(normalized);
       });
   }, []);
+
+  useEffect(() => {
+    fetch('/schedule_otimizado.json')
+      .then((res) => res.json())
+      .then((data) => {
+        // Supports either a plain list or { gantt_data: [...] }
+        const rows: any[] = Array.isArray(data) ? data : Array.isArray(data?.gantt_data) ? data.gantt_data : [];
+        const normalized: ScheduleOp[] = rows
+          .map((r: any) => ({
+            order_id: String(r.order_id),
+            equipment: String(r.equipment ?? ''),
+            process: String(r.process ?? ''),
+            seq: Number(r.seq ?? 0),
+            deadline: String(r.deadline ?? ''),
+            start: String(r.start ?? ''),
+            end: String(r.end ?? ''),
+            duration: Number(r.duration ?? 0),
+            late: typeof r.late === 'boolean' ? r.late : undefined
+          }))
+          .filter((r) => r.order_id && r.process && r.start && r.end);
+
+        setScheduleOps(normalized);
+      })
+      .catch(() => {
+        setScheduleOps([]);
+      });
+  }, []);
+
+  const scheduleSummaryMemo = useMemo<ScheduleSummary | null>(() => {
+    if (!scheduleOps.length) return null;
+
+    const parseDate = (s: string) => {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    // Per-order completion (max end)
+    const orderEnd = new Map<string, Date>();
+    const orderDeadline = new Map<string, Date>();
+    for (const op of scheduleOps) {
+      const end = parseDate(op.end);
+      if (end) {
+        const prev = orderEnd.get(op.order_id);
+        if (!prev || end.getTime() > prev.getTime()) orderEnd.set(op.order_id, end);
+      }
+      const dl = op.deadline ? parseDate(op.deadline) : null;
+      if (dl) {
+        const prevDl = orderDeadline.get(op.order_id);
+        if (!prevDl || dl.getTime() < prevDl.getTime()) orderDeadline.set(op.order_id, dl);
+      }
+    }
+
+    const cutoff = new Date('2027-01-31T23:59:59');
+    const finishes = Array.from(orderEnd.entries());
+    finishes.sort((a, b) => a[1].getTime() - b[1].getTime());
+
+    const ordersTotal = finishes.length;
+    const ordersDeliveredByJan2027 = finishes.filter(([, dt]) => dt.getTime() <= cutoff.getTime()).length;
+    const deliveriesPctByJan2027 = ordersTotal ? (ordersDeliveredByJan2027 / ordersTotal) * 100 : 0;
+    const makespanDate = finishes.length ? finishes[finishes.length - 1][1] : undefined;
+
+    let onTimeOrders = 0;
+    let lateOrders = 0;
+    for (const [oid, finish] of finishes) {
+      const dl = orderDeadline.get(oid);
+      if (!dl) continue;
+      if (finish.getTime() <= dl.getTime()) onTimeOrders += 1;
+      else lateOrders += 1;
+    }
+
+    // Deliveries by month
+    const byMonth = new Map<string, number>();
+    for (const [, dt] of finishes) {
+      const month = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      byMonth.set(month, (byMonth.get(month) ?? 0) + 1);
+    }
+    const deliveriesByMonth = Array.from(byMonth.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, count]) => ({ month, count }));
+
+    // Workload by process + max overlap (proxy for congestion)
+    const workHours = new Map<string, number>();
+    const eventsByProcess = new Map<string, Array<{ t: number; d: number }>>();
+    for (const op of scheduleOps) {
+      const p = op.process;
+      workHours.set(p, (workHours.get(p) ?? 0) + (Number.isFinite(op.duration) ? op.duration : 0));
+      const s = parseDate(op.start);
+      const e = parseDate(op.end);
+      if (!s || !e) continue;
+      const arr = eventsByProcess.get(p) ?? [];
+      arr.push({ t: s.getTime(), d: +1 });
+      arr.push({ t: e.getTime(), d: -1 });
+      eventsByProcess.set(p, arr);
+    }
+
+    const workloadByProcess: Array<{ process: string; hours: number; maxOverlap: number }> = [];
+    for (const [p, hrs] of workHours.entries()) {
+      const ev = eventsByProcess.get(p) ?? [];
+      ev.sort((a, b) => a.t - b.t || a.d - b.d);
+      let cur = 0;
+      let mx = 0;
+      for (const { d } of ev) {
+        cur += d;
+        if (cur > mx) mx = cur;
+      }
+      workloadByProcess.push({ process: p, hours: hrs, maxOverlap: mx });
+    }
+    workloadByProcess.sort((a, b) => b.hours - a.hours);
+
+    const topBottleneck = workloadByProcess[0]
+      ? { process: workloadByProcess[0].process, hours: workloadByProcess[0].hours, maxOverlap: workloadByProcess[0].maxOverlap }
+      : undefined;
+
+    return {
+      ordersTotal,
+      ordersDeliveredByJan2027,
+      deliveriesPctByJan2027,
+      makespanDate,
+      onTimeOrders,
+      lateOrders,
+      deliveriesByMonth,
+      workloadByProcess: workloadByProcess.slice(0, 12),
+      topBottleneck
+    };
+  }, [scheduleOps]);
+
+  useEffect(() => {
+    setScheduleSummary(scheduleSummaryMemo);
+  }, [scheduleSummaryMemo]);
 
   const filtered = useMemo(() => {
     if (impactoFilter === 'all') return processes;
@@ -242,6 +397,43 @@ export default function DashboardPage() {
     }
   };
 
+  const deliveriesByMonthChartData = useMemo(() => {
+    const labels = scheduleSummary?.deliveriesByMonth.map((d) => d.month) ?? [];
+    const values = scheduleSummary?.deliveriesByMonth.map((d) => d.count) ?? [];
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Entregas (ordens finalizadas)',
+          data: values,
+          backgroundColor: '#a78bfa',
+          borderRadius: 6
+        }
+      ]
+    };
+  }, [scheduleSummary]);
+
+  const workloadByProcessChartData = useMemo(() => {
+    const items = scheduleSummary?.workloadByProcess ?? [];
+    return {
+      labels: items.map((d) => d.process),
+      datasets: [
+        {
+          label: 'Carga (horas)',
+          data: items.map((d) => Math.round(d.hours)),
+          backgroundColor: '#06b6d4',
+          borderRadius: 6
+        },
+        {
+          label: 'Congestionamento (máx. simultâneo)',
+          data: items.map((d) => d.maxOverlap),
+          backgroundColor: '#ef4444',
+          borderRadius: 6
+        }
+      ]
+    };
+  }, [scheduleSummary]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
       <motion.div className="max-w-7xl mx-auto" variants={containerVariants} initial="hidden" animate="visible">
@@ -250,6 +442,61 @@ export default function DashboardPage() {
           <h1 className="text-4xl font-bold mb-2">VOTH - Otimização de Processos</h1>
           <p className="text-slate-400">Análise de gargalos · Produção · Saturação · Distribuição</p>
           <p className="text-sm text-slate-500 mt-2">Plaina 1 | 24 horas | {processes.length} processos</p>
+        </motion.div>
+
+        {/* KPIs do Cronograma (sequência + materiais + recursos) */}
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+            <p className="text-slate-400 text-sm mb-1">Entregas até Jan/2027</p>
+            <p className="text-3xl font-bold">
+              {scheduleSummary ? `${scheduleSummary.ordersDeliveredByJan2027}/${scheduleSummary.ordersTotal}` : '—'}
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              {scheduleSummary ? `${scheduleSummary.deliveriesPctByJan2027.toFixed(1)}%` : 'Carregando cronograma…'}
+            </p>
+          </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+            <p className="text-slate-400 text-sm mb-1">Makespan (fim total)</p>
+            <p className="text-2xl font-bold">
+              {scheduleSummary?.makespanDate ? scheduleSummary.makespanDate.toLocaleDateString('pt-BR') : '—'}
+            </p>
+            <p className="text-xs text-slate-500 mt-1">Conclusão do plano</p>
+          </div>
+          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
+            <p className="text-green-400 text-sm mb-1">No Prazo (vs prazo)</p>
+            <p className="text-3xl font-bold">{scheduleSummary ? scheduleSummary.onTimeOrders : '—'}</p>
+            <p className="text-xs text-slate-500 mt-1">Ordens dentro do prazo</p>
+          </div>
+          <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
+            <p className="text-red-400 text-sm mb-1">Atrasadas (vs prazo)</p>
+            <p className="text-3xl font-bold">{scheduleSummary ? scheduleSummary.lateOrders : '—'}</p>
+            <p className="text-xs text-slate-500 mt-1">Ordens fora do prazo</p>
+          </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+            <p className="text-slate-400 text-sm mb-1">Maior carga (setor)</p>
+            <p className="text-xl font-bold truncate">{scheduleSummary?.topBottleneck?.process ?? '—'}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {scheduleSummary?.topBottleneck ? `${Math.round(scheduleSummary.topBottleneck.hours)}h · máx ${scheduleSummary.topBottleneck.maxOverlap} simult.` : ''}
+            </p>
+          </div>
+        </motion.div>
+
+        {/* Cronograma: entregas por mês + carga/congestionamento por setor */}
+        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+          <motion.div variants={itemVariants} className="lg:col-span-1 bg-slate-800 border border-slate-700 rounded-lg p-6">
+            <h2 className="text-xl font-bold mb-4">Entregas por Mês</h2>
+            <div className="bg-slate-900 p-4 rounded-lg h-80">
+              <Bar data={deliveriesByMonthChartData} options={barOptions} />
+            </div>
+          </motion.div>
+
+          <motion.div variants={itemVariants} className="lg:col-span-2 bg-slate-800 border border-slate-700 rounded-lg p-6">
+            <h2 className="text-xl font-bold mb-4">Carga e Congestionamento por Setor</h2>
+            <p className="text-slate-400 text-sm mb-3">Carga = horas totais. Congestionamento = máximo de operações simultâneas (proxy).</p>
+            <div className="bg-slate-900 p-4 rounded-lg h-80">
+              <Bar data={workloadByProcessChartData} options={barOptions} />
+            </div>
+          </motion.div>
         </motion.div>
 
         {/* KPI Cards */}
