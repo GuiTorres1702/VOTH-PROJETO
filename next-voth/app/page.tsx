@@ -75,6 +75,7 @@ export default function DashboardPage() {
   const [scheduleSummary, setScheduleSummary] = useState<ScheduleSummary | null>(null);
   const [ganttZoom, setGanttZoom] = useState<'all' | 'apr-jun' | 'jul-oct'>('all');
   const [hoveredOp, setHoveredOp] = useState<ScheduleOp | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   const ganttHeaderRef = useRef<HTMLDivElement | null>(null);
   const ganttBodyTimelineRef = useRef<HTMLDivElement | null>(null);
 
@@ -512,7 +513,8 @@ export default function DashboardPage() {
 
     const { startMs, endMs } = pickRange();
     const days = Math.max(1, Math.round((endMs - startMs) / msPerDay));
-    const dayWidth = ganttZoom === 'all' ? 10 : 18;
+    // Bigger pixels per day = more readable labels
+    const dayWidth = ganttZoom === 'all' ? 14 : 26;
 
     const dayLabels: string[] = [];
     for (let i = 0; i <= days; i++) {
@@ -541,23 +543,31 @@ export default function DashboardPage() {
   };
 
   const ganttColorForProcess = (p: string) => {
+    // High-contrast palette (distinct hues, readable on dark bg)
     const map: Record<string, string> = {
-      Solda: '#93c5fd',
-      CT: '#c4b5fd',
-      Fresadora: '#fdba74',
-      Corte: '#fca5a5',
-      Montagem: '#86efac',
-      Rebarba: '#fde68a',
-      Plaina: '#f5d0fe',
-      'Trat. Sup.': '#a7f3d0',
-      'Peq. Usin.': '#fbcfe8',
-      'Eng Man': '#67e8f9',
-      Traçagem: '#fda4af',
-      Qualidade: '#bae6fd',
-      'Serv. Ext.': '#cbd5e1'
+      Corte: '#ff6b6b',
+      CT: '#8b5cf6',
+      'Eng Man': '#22d3ee',
+      Fresadora: '#f59e0b',
+      Montagem: '#22c55e',
+      'Peq. Usin.': '#fb7185',
+      Plaina: '#e879f9',
+      Qualidade: '#60a5fa',
+      Rebarba: '#facc15',
+      'Serv. Ext.': '#94a3b8',
+      Solda: '#38bdf8',
+      Traçagem: '#f97316',
+      'Trat. Sup.': '#34d399'
     };
-    return map[p] ?? '#94a3b8';
+    return map[p] ?? '#a3a3a3';
   };
+
+  const ganttLegend = useMemo(() => {
+    const wanted = ['Corte', 'CT', 'Eng Man', 'Fresadora', 'Montagem', 'Peq. Usin.', 'Plaina', 'Qualidade', 'Rebarba', 'Serv. Ext.'];
+    return wanted.map((p) => ({ p, c: ganttColorForProcess(p) }));
+  }, []);
+
+  const fmtDdMm = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
@@ -659,10 +669,20 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* Legend */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            {ganttLegend.map(({ p, c }) => (
+              <div key={`leg-${p}`} className="flex items-center gap-2 bg-slate-900/60 border border-slate-700 rounded-full px-3 py-1">
+                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c }} />
+                <div className="text-xs text-slate-200">{p}</div>
+              </div>
+            ))}
+          </div>
+
           <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
             {/* Header (fixed vertically) */}
             <div className="flex border-b border-slate-700">
-              <div className="w-44 shrink-0 h-10 px-3 flex items-center text-xs text-slate-400 border-r border-slate-700">
+              <div className="w-52 shrink-0 h-10 px-3 flex items-center text-xs text-slate-400 border-r border-slate-700">
                 PROCESSO
               </div>
               <div className="flex-1 overflow-x-hidden">
@@ -674,7 +694,7 @@ export default function DashboardPage() {
                     {ganttModel?.dayLabels.map((d, idx) => (
                       <div
                         key={`day-${idx}`}
-                        className="text-[10px] text-slate-400 flex items-center justify-center border-r border-slate-800"
+                        className="text-[11px] text-slate-300 flex items-center justify-center border-r border-slate-800"
                         style={{ width: ganttModel.dayWidth }}
                       >
                         {idx % (ganttZoom === 'all' ? 7 : 3) === 0 ? d : ''}
@@ -686,20 +706,23 @@ export default function DashboardPage() {
             </div>
 
             {/* Body (single vertical scroll for both columns) */}
-            <div className="max-h-[520px] overflow-y-auto">
+            <div className="max-h-[560px] overflow-y-auto">
               <div className="flex">
                 {/* Left labels (no own scroll) */}
-                <div className="w-44 shrink-0 border-r border-slate-700">
+                <div className="w-52 shrink-0 border-r border-slate-700">
                   {ganttModel?.processes.map((p) => {
                     const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
-                    const rowHeight = Math.max(40, 10 + lanes * 22);
+                    const rowHeight = Math.max(52, 14 + lanes * 30);
                     return (
                       <div
                         key={`lbl-${p}`}
-                        className="px-3 flex items-center border-b border-slate-800 text-sm"
+                        className="px-3 flex items-center border-b border-slate-800 text-sm bg-slate-950/30"
                         style={{ height: rowHeight }}
                       >
-                        <span className="truncate">{p}</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: ganttColorForProcess(p) }} />
+                          <span className="truncate font-semibold text-slate-100">{p}</span>
+                        </div>
                       </div>
                     );
                   }) ?? <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>}
@@ -718,7 +741,7 @@ export default function DashboardPage() {
                     {ganttModel?.processes.map((p) => {
                       const ops = ganttModel.rowsByProcess.get(p) ?? [];
                       const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
-                      const rowHeight = Math.max(40, 10 + lanes * 22);
+                      const rowHeight = Math.max(52, 14 + lanes * 30);
                       return (
                         <div key={`row-${p}`} className="border-b border-slate-800 relative" style={{ height: rowHeight }}>
                           {/* Grid vertical lines */}
@@ -728,6 +751,17 @@ export default function DashboardPage() {
                                 key={`grid-${p}-${idx}`}
                                 className="border-r border-slate-800/60"
                                 style={{ width: ganttModel.dayWidth }}
+                              />
+                            ))}
+                          </div>
+
+                          {/* Lane separators */}
+                          <div className="absolute inset-0 pointer-events-none">
+                            {Array.from({ length: lanes }).map((_, laneIdx) => (
+                              <div
+                                key={`lane-${p}-${laneIdx}`}
+                                className="absolute left-0 right-0 border-t border-slate-800/70"
+                                style={{ top: 14 + laneIdx * 30 }}
                               />
                             ))}
                           </div>
@@ -742,26 +776,41 @@ export default function DashboardPage() {
                             const left = Math.max(0, leftDays * ganttModel.dayWidth);
                             const width = Math.max(3, widthDays * ganttModel.dayWidth);
                             const bg = ganttColorForProcess(p);
-                            const top = 6 + op.lane * 22;
+                            const top = 18 + op.lane * 30;
+                            const showText = width >= 90;
 
                             return (
                               <div
                                 key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
-                                className="absolute h-[18px] rounded-md border border-black/10 shadow-sm cursor-pointer"
+                                className="absolute h-[22px] rounded-lg shadow-sm cursor-pointer"
                                 style={{
                                   left,
                                   width,
                                   top,
                                   backgroundColor: bg,
-                                  opacity: op.late ? 0.85 : 0.95
+                                  opacity: op.late ? 0.85 : 0.95,
+                                  boxShadow: '0 1px 0 rgba(0,0,0,0.35), 0 6px 18px rgba(0,0,0,0.25)'
                                 }}
-                                onMouseEnter={() => setHoveredOp(op)}
-                                onMouseLeave={() => setHoveredOp(null)}
+                                onMouseEnter={(e) => {
+                                  setHoveredOp(op);
+                                  setTooltipPos({ x: e.clientX, y: e.clientY });
+                                }}
+                                onMouseMove={(e) => setTooltipPos({ x: e.clientX, y: e.clientY })}
+                                onMouseLeave={() => {
+                                  setHoveredOp(null);
+                                  setTooltipPos(null);
+                                }}
                                 title={`${op.equipment} · OP ${op.order_id} · Seq ${op.seq}`}
                               >
-                                <div className="px-2 text-[11px] text-slate-900 font-semibold truncate leading-[18px]">
-                                  {op.equipment || `OP ${op.order_id}`}
-                                </div>
+                                {showText ? (
+                                  <div className="px-2 text-[12px] text-slate-950 font-extrabold truncate leading-[22px]">
+                                    {op.equipment || `OP ${op.order_id}`}
+                                  </div>
+                                ) : (
+                                  <div className="px-1 text-[10px] text-slate-950 font-extrabold leading-[22px] opacity-80">
+                                    •
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -774,33 +823,35 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {hoveredOp && (
-            <div className="mt-4 bg-slate-900/70 border border-slate-700 rounded-lg p-4 text-sm">
-              <div className="flex flex-wrap gap-x-6 gap-y-2">
-                <div>
-                  <div className="text-slate-400 text-xs">Equipamento</div>
-                  <div className="font-semibold">{hoveredOp.equipment}</div>
+          {/* Floating tooltip */}
+          {hoveredOp && tooltipPos && (
+            <div
+              className="fixed z-[9999] pointer-events-none"
+              style={{ left: tooltipPos.x + 14, top: tooltipPos.y + 14 }}
+            >
+              <div className="bg-slate-950/95 border border-slate-700 rounded-xl px-4 py-3 shadow-2xl max-w-[360px]">
+                <div className="text-sm font-extrabold text-slate-100 truncate">{hoveredOp.equipment || `OP ${hoveredOp.order_id}`}</div>
+                <div className="text-[11px] text-slate-400 mt-1">
+                  <span className="text-slate-200 font-semibold">{hoveredOp.process}</span>
+                  <span className="mx-2 text-slate-600">•</span>
+                  OP <span className="text-slate-200 font-semibold">{hoveredOp.order_id}</span> · Seq {hoveredOp.seq}
                 </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Ordem</div>
-                  <div className="font-semibold">{hoveredOp.order_id}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Setor</div>
-                  <div className="font-semibold">{hoveredOp.process}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Início</div>
-                  <div className="font-semibold">{new Date(hoveredOp.start).toLocaleString('pt-BR')}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Fim</div>
-                  <div className="font-semibold">{new Date(hoveredOp.end).toLocaleString('pt-BR')}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400 text-xs">Prazo</div>
-                  <div className={`font-semibold ${hoveredOp.late ? 'text-red-400' : 'text-green-400'}`}>
-                    {hoveredOp.deadline ? new Date(hoveredOp.deadline).toLocaleDateString('pt-BR') : '—'} {hoveredOp.late ? '(atraso)' : '(ok)'}
+                <div className="text-[11px] text-slate-400 mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                  <div>
+                    <span className="text-slate-500">Início:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOp.start))}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Fim:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOp.end))}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Duração:</span>{' '}
+                    <span className="text-slate-200 font-semibold">{Number.isFinite(hoveredOp.duration) ? `${hoveredOp.duration.toFixed(1)}h` : '—'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Prazo:</span>{' '}
+                    <span className={`font-semibold ${hoveredOp.late ? 'text-red-400' : 'text-green-400'}`}>
+                      {hoveredOp.deadline ? fmtDdMm(new Date(hoveredOp.deadline)) : '—'} {hoveredOp.late ? '(atraso)' : '(ok)'}
+                    </span>
                   </div>
                 </div>
               </div>
