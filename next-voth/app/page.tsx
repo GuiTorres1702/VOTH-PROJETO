@@ -87,6 +87,8 @@ export default function DashboardPage() {
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
   // single scrollable container ref; header/left are sticky
   const ganttScrollRef = useRef<HTMLDivElement | null>(null);
+  const ganttTopScrollRef = useRef<HTMLDivElement | null>(null);
+  const ganttScrollSyncRef = useRef(false);
 
   useEffect(() => {
     fetch('/processos_analisados.json')
@@ -815,8 +817,44 @@ export default function DashboardPage() {
 
           {/* single scrollable container; sticky left + sticky header */}
           <div className="bg-black/20 rounded-2xl border border-white/10 overflow-hidden">
+            {/* Top horizontal scrollbar (synced) */}
+            <div className="border-b border-white/10 bg-black/20">
+              <div
+                ref={ganttTopScrollRef}
+                className="overflow-x-auto overflow-y-hidden"
+                style={{ height: 14 }}
+                onScroll={() => {
+                  if (ganttScrollSyncRef.current) return;
+                  const top = ganttTopScrollRef.current;
+                  const main = ganttScrollRef.current;
+                  if (!top || !main) return;
+                  ganttScrollSyncRef.current = true;
+                  main.scrollLeft = top.scrollLeft;
+                  requestAnimationFrame(() => {
+                    ganttScrollSyncRef.current = false;
+                  });
+                }}
+              >
+                <div style={{ width: ganttModel ? 208 + (ganttModel.days + 1) * ganttModel.dayWidth : 1200, height: 1 }} />
+              </div>
+            </div>
+
             <div className="max-h-[600px] overflow-y-auto">
-              <div ref={ganttScrollRef} className="overflow-x-auto">
+              <div
+                ref={ganttScrollRef}
+                className="overflow-x-auto"
+                onScroll={() => {
+                  if (ganttScrollSyncRef.current) return;
+                  const top = ganttTopScrollRef.current;
+                  const main = ganttScrollRef.current;
+                  if (!top || !main) return;
+                  ganttScrollSyncRef.current = true;
+                  top.scrollLeft = main.scrollLeft;
+                  requestAnimationFrame(() => {
+                    ganttScrollSyncRef.current = false;
+                  });
+                }}
+              >
                 {ganttModel ? (
                   <div style={{ minWidth: 208 + (ganttModel.days + 1) * ganttModel.dayWidth }}>
                     {/* Sticky date-header row */}
@@ -882,13 +920,13 @@ export default function DashboardPage() {
                               const bg = ganttColorForProcess(p);
 
                               const label = op.equipment || `OP ${op.order_id}`;
-                              const showFullLabel = width >= 80;
+                              const showFullLabel = width >= 110;
                               const showDotOnly = width < 20;
 
                               return (
                                 <div
                                   key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
-                                  className="absolute rounded cursor-pointer select-none transition-opacity hover:opacity-100"
+                                  className="absolute rounded cursor-pointer select-none transition-opacity hover:opacity-100 group overflow-visible"
                                   style={{
                                     left,
                                     width,
@@ -910,6 +948,15 @@ export default function DashboardPage() {
                                     setTooltipPos(null);
                                   }}
                                 >
+                                  {/* Hover label (never cut) */}
+                                  <div className="hidden group-hover:block absolute -top-8 left-0 z-40 max-w-[360px]">
+                                    <div className="px-2 py-1 rounded-lg bg-slate-950/95 border border-white/10 shadow-xl">
+                                      <span className="text-[11px] font-semibold text-white whitespace-nowrap">
+                                        {label}
+                                      </span>
+                                    </div>
+                                  </div>
+
                                   {!showDotOnly && (
                                     <div className="h-full flex items-center px-1.5 overflow-hidden" style={{ maxWidth: width }}>
                                       {showFullLabel ? (
