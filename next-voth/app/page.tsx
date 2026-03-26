@@ -68,6 +68,12 @@ const colorMap: Record<string, string> = {
   'Baixo impacto (fluido)': 'bg-green-100 border-green-500 text-green-900'
 };
 
+// ─── GANTT CONSTANTS ──────────────────────────────────────────────────────────
+const BAR_H = 26; // bar height in px
+const LANE_H = 34; // vertical space per lane (BAR_H + padding)
+const ROW_PAD_TOP = 8; // top padding inside each process row
+const ROW_MIN_H = 52; // minimum row height even with 1 lane
+
 export default function DashboardPage() {
   const [processes, setProcesses] = useState<Process[]>([]);
   const [impactoFilter, setImpactoFilter] = useState<string>('all');
@@ -76,8 +82,8 @@ export default function DashboardPage() {
   const [ganttZoom, setGanttZoom] = useState<'all' | 'apr-jun' | 'jul-oct'>('all');
   const [hoveredOp, setHoveredOp] = useState<ScheduleOp | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-  const ganttHeaderRef = useRef<HTMLDivElement | null>(null);
-  const ganttBodyTimelineRef = useRef<HTMLDivElement | null>(null);
+  // single scrollable container ref; header/left are sticky
+  const ganttScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch('/processos_analisados.json')
@@ -513,8 +519,9 @@ export default function DashboardPage() {
 
     const { startMs, endMs } = pickRange();
     const days = Math.max(1, Math.round((endMs - startMs) / msPerDay));
-    // Bigger pixels per day = more readable labels
-    const dayWidth = ganttZoom === 'all' ? 14 : 26;
+    // wider dayWidth for legibility
+    const dayWidth = ganttZoom === 'all' ? 20 : 32;
+    const labelEvery = ganttZoom === 'all' ? 7 : 3;
 
     const dayLabels: string[] = [];
     for (let i = 0; i <= days; i++) {
@@ -531,16 +538,10 @@ export default function DashboardPage() {
       days,
       dayWidth,
       dayLabels,
-      msPerDay
+      msPerDay,
+      labelEvery
     };
   }, [scheduleOps, ganttZoom]);
-
-  const onGanttBodyScroll = () => {
-    const body = ganttBodyTimelineRef.current;
-    const header = ganttHeaderRef.current;
-    if (!body || !header) return;
-    header.scrollLeft = body.scrollLeft;
-  };
 
   const ganttColorForProcess = (p: string) => {
     // High-contrast palette (distinct hues, readable on dark bg)
@@ -679,146 +680,130 @@ export default function DashboardPage() {
             ))}
           </div>
 
+          {/* single scrollable container; sticky left + sticky header */}
           <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-            {/* Header (fixed vertically) */}
-            <div className="flex border-b border-slate-700">
-              <div className="w-52 shrink-0 h-10 px-3 flex items-center text-xs text-slate-400 border-r border-slate-700">
-                PROCESSO
-              </div>
-              <div className="flex-1 overflow-x-hidden">
-                <div ref={ganttHeaderRef} className="overflow-x-hidden">
-                  <div
-                    className="min-w-max h-10 flex"
-                    style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
-                  >
-                    {ganttModel?.dayLabels.map((d, idx) => (
+            <div className="max-h-[600px] overflow-y-auto">
+              <div ref={ganttScrollRef} className="overflow-x-auto">
+                {ganttModel ? (
+                  <div style={{ minWidth: 208 + (ganttModel.days + 1) * ganttModel.dayWidth }}>
+                    {/* Sticky date-header row */}
+                    <div className="flex sticky top-0 z-20 bg-slate-900 border-b border-slate-700" style={{ height: 40 }}>
                       <div
-                        key={`day-${idx}`}
-                        className="text-[11px] text-slate-300 flex items-center justify-center border-r border-slate-800"
-                        style={{ width: ganttModel.dayWidth }}
+                        className="shrink-0 flex items-center px-3 text-xs font-semibold text-slate-400 border-r border-slate-700 bg-slate-900 sticky left-0 z-30"
+                        style={{ width: 208 }}
                       >
-                        {idx % (ganttZoom === 'all' ? 7 : 3) === 0 ? d : ''}
+                        PROCESSO
                       </div>
-                    )) ?? <div className="text-xs text-slate-400 px-3 flex items-center">—</div>}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Body (single vertical scroll for both columns) */}
-            <div className="max-h-[560px] overflow-y-auto">
-              <div className="flex">
-                {/* Left labels (no own scroll) */}
-                <div className="w-52 shrink-0 border-r border-slate-700">
-                  {ganttModel?.processes.map((p) => {
-                    const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
-                    const rowHeight = Math.max(52, 14 + lanes * 30);
-                    return (
-                      <div
-                        key={`lbl-${p}`}
-                        className="px-3 flex items-center border-b border-slate-800 text-sm bg-slate-950/30"
-                        style={{ height: rowHeight }}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: ganttColorForProcess(p) }} />
-                          <span className="truncate font-semibold text-slate-100">{p}</span>
-                        </div>
+                      <div className="flex">
+                        {ganttModel.dayLabels.map((label, idx) => (
+                          <div
+                            key={`dh-${idx}`}
+                            className="shrink-0 flex items-center justify-center border-r border-slate-800"
+                            style={{ width: ganttModel.dayWidth, height: 40 }}
+                          >
+                            {idx % ganttModel.labelEvery === 0 ? (
+                              <span className="text-[11px] text-slate-300 font-medium">{label}</span>
+                            ) : null}
+                          </div>
+                        ))}
                       </div>
-                    );
-                  }) ?? <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>}
-                </div>
+                    </div>
 
-                {/* Timeline body (horizontal scroll only; sync header) */}
-                <div
-                  ref={ganttBodyTimelineRef}
-                  className="flex-1 overflow-x-auto overflow-y-hidden"
-                  onScroll={onGanttBodyScroll}
-                >
-                  <div
-                    className="min-w-max"
-                    style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
-                  >
-                    {ganttModel?.processes.map((p) => {
+                    {/* Process rows */}
+                    {ganttModel.processes.map((p, rowIdx) => {
                       const ops = ganttModel.rowsByProcess.get(p) ?? [];
                       const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
-                      const rowHeight = Math.max(52, 14 + lanes * 30);
+                      const rowHeight = Math.max(ROW_MIN_H, ROW_PAD_TOP * 2 + lanes * LANE_H);
+                      const zebra = rowIdx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60';
+
                       return (
-                        <div key={`row-${p}`} className="border-b border-slate-800 relative" style={{ height: rowHeight }}>
-                          {/* Grid vertical lines */}
-                          <div className="absolute inset-0 flex pointer-events-none">
+                        <div key={`row-${p}`} className={`flex border-b border-slate-800 ${zebra}`} style={{ height: rowHeight }}>
+                          <div
+                            className={`shrink-0 flex items-center px-3 border-r border-slate-700 sticky left-0 z-10 ${zebra}`}
+                            style={{ width: 208 }}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: ganttColorForProcess(p) }} />
+                              <span className="text-sm font-semibold text-slate-100 truncate">{p}</span>
+                            </div>
+                          </div>
+
+                          <div className="relative flex-1">
+                            {/* Vertical grid lines */}
                             {ganttModel.dayLabels.map((_, idx) => (
                               <div
-                                key={`grid-${p}-${idx}`}
-                                className="border-r border-slate-800/60"
-                                style={{ width: ganttModel.dayWidth }}
+                                key={`vg-${p}-${idx}`}
+                                className="absolute top-0 bottom-0 border-r border-slate-800/50 pointer-events-none"
+                                style={{ left: idx * ganttModel.dayWidth, width: ganttModel.dayWidth }}
                               />
                             ))}
+
+                            {/* Bars */}
+                            {ops.map((op, i) => {
+                              if (op.endMs < ganttModel.startMs || op.startMs > ganttModel.endMs) return null;
+                              const leftDays = (op.startMs - ganttModel.startMs) / ganttModel.msPerDay;
+                              const widthDays = Math.max(0.25, (op.endMs - op.startMs) / ganttModel.msPerDay);
+                              const left = Math.max(0, leftDays * ganttModel.dayWidth);
+                              const width = Math.max(4, widthDays * ganttModel.dayWidth);
+                              const top = ROW_PAD_TOP + op.lane * LANE_H;
+                              const bg = ganttColorForProcess(p);
+
+                              const label = op.equipment || `OP ${op.order_id}`;
+                              const showFullLabel = width >= 80;
+                              const showDotOnly = width < 20;
+
+                              return (
+                                <div
+                                  key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
+                                  className="absolute rounded cursor-pointer select-none transition-opacity hover:opacity-100"
+                                  style={{
+                                    left,
+                                    width,
+                                    top,
+                                    height: BAR_H,
+                                    backgroundColor: bg,
+                                    opacity: op.late ? 0.75 : 0.92,
+                                    outline: op.late ? '2px solid #ef4444' : 'none',
+                                    outlineOffset: 1,
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.5)'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    setHoveredOp(op);
+                                    setTooltipPos({ x: e.clientX, y: e.clientY });
+                                  }}
+                                  onMouseMove={(e) => setTooltipPos({ x: e.clientX, y: e.clientY })}
+                                  onMouseLeave={() => {
+                                    setHoveredOp(null);
+                                    setTooltipPos(null);
+                                  }}
+                                >
+                                  {!showDotOnly && (
+                                    <div className="h-full flex items-center px-1.5 overflow-hidden" style={{ maxWidth: width }}>
+                                      {showFullLabel ? (
+                                        <span
+                                          className="text-[11px] font-bold leading-tight whitespace-nowrap overflow-hidden text-ellipsis"
+                                          style={{ color: isLightColor(bg) ? '#0f172a' : '#f8fafc' }}
+                                        >
+                                          {label}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-bold leading-tight" style={{ color: isLightColor(bg) ? '#0f172a' : '#f8fafc' }}>
+                                          {label.slice(0, 3)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
-
-                          {/* Lane separators */}
-                          <div className="absolute inset-0 pointer-events-none">
-                            {Array.from({ length: lanes }).map((_, laneIdx) => (
-                              <div
-                                key={`lane-${p}-${laneIdx}`}
-                                className="absolute left-0 right-0 border-t border-slate-800/70"
-                                style={{ top: 14 + laneIdx * 30 }}
-                              />
-                            ))}
-                          </div>
-
-                          {/* Bars */}
-                          {ops.map((op, i) => {
-                            // hide bars outside current zoom range
-                            if (op.endMs < ganttModel.startMs || op.startMs > ganttModel.endMs) return null;
-
-                            const leftDays = (op.startMs - ganttModel.startMs) / ganttModel.msPerDay;
-                            const widthDays = Math.max(0.2, (op.endMs - op.startMs) / ganttModel.msPerDay);
-                            const left = Math.max(0, leftDays * ganttModel.dayWidth);
-                            const width = Math.max(3, widthDays * ganttModel.dayWidth);
-                            const bg = ganttColorForProcess(p);
-                            const top = 18 + op.lane * 30;
-                            const showText = width >= 90;
-
-                            return (
-                              <div
-                                key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
-                                className="absolute h-[22px] rounded-lg shadow-sm cursor-pointer"
-                                style={{
-                                  left,
-                                  width,
-                                  top,
-                                  backgroundColor: bg,
-                                  opacity: op.late ? 0.85 : 0.95,
-                                  boxShadow: '0 1px 0 rgba(0,0,0,0.35), 0 6px 18px rgba(0,0,0,0.25)'
-                                }}
-                                onMouseEnter={(e) => {
-                                  setHoveredOp(op);
-                                  setTooltipPos({ x: e.clientX, y: e.clientY });
-                                }}
-                                onMouseMove={(e) => setTooltipPos({ x: e.clientX, y: e.clientY })}
-                                onMouseLeave={() => {
-                                  setHoveredOp(null);
-                                  setTooltipPos(null);
-                                }}
-                                title={`${op.equipment} · OP ${op.order_id} · Seq ${op.seq}`}
-                              >
-                                {showText ? (
-                                  <div className="px-2 text-[12px] text-slate-950 font-extrabold truncate leading-[22px]">
-                                    {op.equipment || `OP ${op.order_id}`}
-                                  </div>
-                                ) : (
-                                  <div className="px-1 text-[10px] text-slate-950 font-extrabold leading-[22px] opacity-80">
-                                    •
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
                         </div>
                       );
-                    }) ?? null}
+                    })}
                   </div>
-                </div>
+                ) : (
+                  <div className="h-24 flex items-center justify-center text-slate-400 text-sm">Carregando cronograma…</div>
+                )}
               </div>
             </div>
           </div>
@@ -850,7 +835,7 @@ export default function DashboardPage() {
                   <div>
                     <span className="text-slate-500">Prazo:</span>{' '}
                     <span className={`font-semibold ${hoveredOp.late ? 'text-red-400' : 'text-green-400'}`}>
-                      {hoveredOp.deadline ? fmtDdMm(new Date(hoveredOp.deadline)) : '—'} {hoveredOp.late ? '(atraso)' : '(ok)'}
+                      {hoveredOp.deadline ? fmtDdMm(new Date(hoveredOp.deadline)) : '—'} {hoveredOp.late ? '⚠ atraso' : '✓ ok'}
                     </span>
                   </div>
                 </div>
@@ -1100,4 +1085,11 @@ export default function DashboardPage() {
       </motion.div>
     </div>
   );
+}
+
+function isLightColor(hex: string): boolean {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 140;
 }
