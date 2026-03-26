@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend, LineElement, PointElement, Filler } from 'chart.js';
 import { Bar, Pie, Line } from 'react-chartjs-2';
@@ -75,6 +75,8 @@ export default function DashboardPage() {
   const [scheduleSummary, setScheduleSummary] = useState<ScheduleSummary | null>(null);
   const [ganttZoom, setGanttZoom] = useState<'all' | 'apr-jun' | 'jul-oct'>('all');
   const [hoveredOp, setHoveredOp] = useState<ScheduleOp | null>(null);
+  const ganttHeaderRef = useRef<HTMLDivElement | null>(null);
+  const ganttBodyTimelineRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     fetch('/processos_analisados.json')
@@ -531,6 +533,13 @@ export default function DashboardPage() {
     };
   }, [scheduleOps, ganttZoom]);
 
+  const onGanttBodyScroll = () => {
+    const body = ganttBodyTimelineRef.current;
+    const header = ganttHeaderRef.current;
+    if (!body || !header) return;
+    header.scrollLeft = body.scrollLeft;
+  };
+
   const ganttColorForProcess = (p: string) => {
     const map: Record<string, string> = {
       Solda: '#93c5fd',
@@ -651,11 +660,36 @@ export default function DashboardPage() {
           </div>
 
           <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
-            <div className="flex">
-              {/* Left labels */}
-              <div className="w-44 shrink-0 border-r border-slate-700">
-                <div className="h-10 px-3 flex items-center text-xs text-slate-400 border-b border-slate-700">PROCESSO</div>
-                <div className="max-h-[520px] overflow-y-auto">
+            {/* Header (fixed vertically) */}
+            <div className="flex border-b border-slate-700">
+              <div className="w-44 shrink-0 h-10 px-3 flex items-center text-xs text-slate-400 border-r border-slate-700">
+                PROCESSO
+              </div>
+              <div className="flex-1 overflow-x-hidden">
+                <div ref={ganttHeaderRef} className="overflow-x-hidden">
+                  <div
+                    className="min-w-max h-10 flex"
+                    style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
+                  >
+                    {ganttModel?.dayLabels.map((d, idx) => (
+                      <div
+                        key={`day-${idx}`}
+                        className="text-[10px] text-slate-400 flex items-center justify-center border-r border-slate-800"
+                        style={{ width: ganttModel.dayWidth }}
+                      >
+                        {idx % (ganttZoom === 'all' ? 7 : 3) === 0 ? d : ''}
+                      </div>
+                    )) ?? <div className="text-xs text-slate-400 px-3 flex items-center">—</div>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Body (single vertical scroll for both columns) */}
+            <div className="max-h-[520px] overflow-y-auto">
+              <div className="flex">
+                {/* Left labels (no own scroll) */}
+                <div className="w-44 shrink-0 border-r border-slate-700">
                   {ganttModel?.processes.map((p) => {
                     const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
                     const rowHeight = Math.max(40, 10 + lanes * 22);
@@ -668,33 +702,19 @@ export default function DashboardPage() {
                         <span className="truncate">{p}</span>
                       </div>
                     );
-                  }) ?? (
-                    <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>
-                  )}
+                  }) ?? <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>}
                 </div>
-              </div>
 
-              {/* Timeline */}
-              <div className="flex-1 overflow-x-auto">
+                {/* Timeline body (horizontal scroll only; sync header) */}
                 <div
-                  className="min-w-max"
-                  style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
+                  ref={ganttBodyTimelineRef}
+                  className="flex-1 overflow-x-auto overflow-y-hidden"
+                  onScroll={onGanttBodyScroll}
                 >
-                  {/* Header days */}
-                  <div className="h-10 border-b border-slate-700 flex sticky top-0 bg-slate-900/90 backdrop-blur">
-                    {ganttModel?.dayLabels.map((d, idx) => (
-                      <div
-                        key={`day-${idx}`}
-                        className="text-[10px] text-slate-400 flex items-center justify-center border-r border-slate-800"
-                        style={{ width: ganttModel.dayWidth }}
-                      >
-                        {idx % (ganttZoom === 'all' ? 7 : 3) === 0 ? d : ''}
-                      </div>
-                    )) ?? <div className="text-xs text-slate-400 px-3 flex items-center">—</div>}
-                  </div>
-
-                  {/* Rows */}
-                  <div className="max-h-[520px] overflow-y-auto">
+                  <div
+                    className="min-w-max"
+                    style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
+                  >
                     {ganttModel?.processes.map((p) => {
                       const ops = ganttModel.rowsByProcess.get(p) ?? [];
                       const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
@@ -714,10 +734,13 @@ export default function DashboardPage() {
 
                           {/* Bars */}
                           {ops.map((op, i) => {
+                            // hide bars outside current zoom range
+                            if (op.endMs < ganttModel.startMs || op.startMs > ganttModel.endMs) return null;
+
                             const leftDays = (op.startMs - ganttModel.startMs) / ganttModel.msPerDay;
                             const widthDays = Math.max(0.2, (op.endMs - op.startMs) / ganttModel.msPerDay);
-                            const left = leftDays * ganttModel.dayWidth;
-                            const width = widthDays * ganttModel.dayWidth;
+                            const left = Math.max(0, leftDays * ganttModel.dayWidth);
+                            const width = Math.max(3, widthDays * ganttModel.dayWidth);
                             const bg = ganttColorForProcess(p);
                             const top = 6 + op.lane * 22;
 
