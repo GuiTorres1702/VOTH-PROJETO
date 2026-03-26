@@ -44,6 +44,8 @@ type ScheduleOp = {
   late?: boolean;
 };
 
+type ScheduleMode = 'optimized' | 'excel';
+
 type ScheduleSummary = {
   ordersTotal: number;
   ordersDeliveredByJan2027: number;
@@ -78,6 +80,7 @@ export default function DashboardPage() {
   const [processes, setProcesses] = useState<Process[]>([]);
   const [impactoFilter, setImpactoFilter] = useState<string>('all');
   const [scheduleOps, setScheduleOps] = useState<ScheduleOp[]>([]);
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('optimized');
   const [scheduleSummary, setScheduleSummary] = useState<ScheduleSummary | null>(null);
   const [ganttZoom, setGanttZoom] = useState<'all' | 'apr-jun' | 'jul-oct'>('all');
   const [hoveredOp, setHoveredOp] = useState<ScheduleOp | null>(null);
@@ -132,8 +135,100 @@ export default function DashboardPage() {
       });
   }, []);
 
+  const baselineExcelOps = useMemo<ScheduleOp[]>(() => {
+    if (!scheduleOps.length) return [];
+
+    const WS_CONFIG: Record<string, { posts: number; hPerDay: number }> = {
+      Corte: { posts: 1, hPerDay: 8 },
+      CT: { posts: 1, hPerDay: 24 },
+      'Eng Man': { posts: 3, hPerDay: 8 },
+      Fresadora: { posts: 1, hPerDay: 24 },
+      Montagem: { posts: 8, hPerDay: 8 },
+      'Peq. Usin.': { posts: 1, hPerDay: 8 },
+      Qualidade: { posts: 3, hPerDay: 8 },
+      Rebarba: { posts: 1, hPerDay: 8 },
+      'Serv. Ext.': { posts: 99, hPerDay: 24 },
+      Solda: { posts: 5, hPerDay: 16 },
+      Traçagem: { posts: 1, hPerDay: 8 },
+      'Trat. Sup.': { posts: 1, hPerDay: 8 },
+      Plaina: { posts: 1, hPerDay: 24 }
+    };
+
+    const parseDate = (s: string) => {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const startAnchor =
+      scheduleOps
+        .map((o) => parseDate(o.start))
+        .filter((d): d is Date => !!d)
+        .sort((a, b) => a.getTime() - b.getTime())[0] ?? new Date();
+
+    const durToCalendarHours = (durH: number, ws: string) => {
+      const cfg = WS_CONFIG[ws] ?? { posts: 1, hPerDay: 8 };
+      return (durH * 24) / cfg.hPerDay;
+    };
+
+    const postAvail: Record<string, number[]> = {};
+    for (const [ws, cfg] of Object.entries(WS_CONFIG)) {
+      postAvail[ws] = Array.from({ length: cfg.posts }, () => 0);
+    }
+    const getPosts = (ws: string) => {
+      if (!postAvail[ws]) postAvail[ws] = [0];
+      return postAvail[ws];
+    };
+
+    const orderLastEnd = new Map<string, number>();
+
+    const opsSorted = [...scheduleOps].sort((a, b) => {
+      const ao = Number(a.order_id);
+      const bo = Number(b.order_id);
+      if (Number.isFinite(ao) && Number.isFinite(bo) && ao !== bo) return ao - bo;
+      if (a.order_id !== b.order_id) return a.order_id.localeCompare(b.order_id);
+      return (a.seq ?? 0) - (b.seq ?? 0);
+    });
+
+    const out: ScheduleOp[] = [];
+    for (const op of opsSorted) {
+      const ws = op.process;
+      const posts = getPosts(ws);
+      const prevEnd = orderLastEnd.get(op.order_id) ?? 0;
+
+      let bestIdx = 0;
+      let bestAvail = posts[0] ?? 0;
+      for (let i = 1; i < posts.length; i++) {
+        if (posts[i] < bestAvail) {
+          bestAvail = posts[i];
+          bestIdx = i;
+        }
+      }
+
+      const startCalH = Math.max(prevEnd, bestAvail);
+      const endCalH = startCalH + durToCalendarHours(op.duration, ws);
+
+      posts[bestIdx] = endCalH;
+      orderLastEnd.set(op.order_id, endCalH);
+
+      const startDate = new Date(startAnchor.getTime() + startCalH * 60 * 60 * 1000);
+      const endDate = new Date(startAnchor.getTime() + endCalH * 60 * 60 * 1000);
+
+      out.push({
+        ...op,
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      });
+    }
+
+    return out;
+  }, [scheduleOps]);
+
+  const displayedScheduleOps = useMemo(() => {
+    return scheduleMode === 'optimized' ? scheduleOps : baselineExcelOps;
+  }, [scheduleMode, scheduleOps, baselineExcelOps]);
+
   const scheduleSummaryMemo = useMemo<ScheduleSummary | null>(() => {
-    if (!scheduleOps.length) return null;
+    if (!displayedScheduleOps.length) return null;
 
     const parseDate = (s: string) => {
       const d = new Date(s);
@@ -143,7 +238,7 @@ export default function DashboardPage() {
     // Per-order completion (max end)
     const orderEnd = new Map<string, Date>();
     const orderDeadline = new Map<string, Date>();
-    for (const op of scheduleOps) {
+    for (const op of displayedScheduleOps) {
       const end = parseDate(op.end);
       if (end) {
         const prev = orderEnd.get(op.order_id);
@@ -187,7 +282,7 @@ export default function DashboardPage() {
     // Workload by process + max overlap (proxy for congestion)
     const workHours = new Map<string, number>();
     const eventsByProcess = new Map<string, Array<{ t: number; d: number }>>();
-    for (const op of scheduleOps) {
+    for (const op of displayedScheduleOps) {
       const p = op.process;
       workHours.set(p, (workHours.get(p) ?? 0) + (Number.isFinite(op.duration) ? op.duration : 0));
       const s = parseDate(op.start);
@@ -228,7 +323,7 @@ export default function DashboardPage() {
       workloadByProcess: workloadByProcess.slice(0, 12),
       topBottleneck
     };
-  }, [scheduleOps]);
+  }, [displayedScheduleOps]);
 
   useEffect(() => {
     setScheduleSummary(scheduleSummaryMemo);
@@ -446,7 +541,7 @@ export default function DashboardPage() {
   }, [scheduleSummary]);
 
   const ganttModel = useMemo(() => {
-    if (!scheduleOps.length) return null;
+    if (!displayedScheduleOps.length) return null;
 
     const parseDate = (s: string) => {
       const d = new Date(s);
@@ -460,7 +555,7 @@ export default function DashboardPage() {
 
     // First pass: group ops and track horizon
     const tempByProcess = new Map<string, Array<ScheduleOp & { startMs: number; endMs: number }>>();
-    for (const op of scheduleOps) {
+    for (const op of displayedScheduleOps) {
       const s = parseDate(op.start);
       const e = parseDate(op.end);
       if (!s || !e) continue;
@@ -541,7 +636,7 @@ export default function DashboardPage() {
       msPerDay,
       labelEvery
     };
-  }, [scheduleOps, ganttZoom]);
+  }, [displayedScheduleOps, ganttZoom]);
 
   const ganttColorForProcess = (p: string) => {
     // High-contrast palette (distinct hues, readable on dark bg)
@@ -658,9 +753,29 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
               <h2 className="text-xl font-bold">Fluxo de Produção (Gantt)</h2>
-              <p className="text-slate-400 text-sm">Sequência por setor baseada no cronograma otimizado.</p>
+              <p className="text-white/60 text-sm">
+                Sequência por setor baseada no cronograma {scheduleMode === 'optimized' ? 'otimizado' : 'baseline (ordem do Excel)'}.
+              </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-xl border border-white/10 bg-black/20 p-1">
+                <button
+                  onClick={() => setScheduleMode('optimized')}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                    scheduleMode === 'optimized' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Otimizado
+                </button>
+                <button
+                  onClick={() => setScheduleMode('excel')}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                    scheduleMode === 'excel' ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Ordem do Excel
+                </button>
+              </div>
               <button
                 onClick={() => setGanttZoom('all')}
                 className={`px-3 py-2 rounded-lg border text-xs font-semibold transition ${
