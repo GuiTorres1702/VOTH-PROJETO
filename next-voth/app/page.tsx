@@ -571,72 +571,90 @@ export default function DashboardPage() {
   const fmtDdMm = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
-      <motion.div className="max-w-7xl mx-auto" variants={containerVariants} initial="hidden" animate="visible">
+    <div className="min-h-screen text-white">
+      {/* Background */}
+      <div className="fixed inset-0 -z-10 bg-[#070712]" />
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(1200px_circle_at_20%_10%,rgba(167,139,250,0.22),transparent_60%),radial-gradient(900px_circle_at_85%_25%,rgba(34,211,238,0.18),transparent_55%),radial-gradient(900px_circle_at_35%_85%,rgba(34,197,94,0.12),transparent_60%)]" />
+      <div className="fixed inset-0 -z-10 opacity-[0.05] bg-[linear-gradient(to_right,rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.6)_1px,transparent_1px)] bg-[size:56px_56px]" />
+
+      <motion.div className="max-w-7xl mx-auto px-6 py-8" variants={containerVariants} initial="hidden" animate="visible">
         {/* Header */}
-        <motion.div variants={itemVariants} className="mb-8">
-          <h1 className="text-4xl font-bold mb-2">VOTH - Otimização de Processos</h1>
-          <p className="text-slate-400">Análise de gargalos · Produção · Saturação · Distribuição</p>
-          <p className="text-sm text-slate-500 mt-2">Plaina 1 | 24 horas | {processes.length} processos</p>
+        <motion.div variants={itemVariants} className="mb-10 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight">
+              VOTH <span className="text-white/60 font-bold">Dashboard</span>
+            </h1>
+            <p className="text-white/70 mt-2">Otimização de processos · Sequenciamento · Gargalos · Risco</p>
+            <p className="text-xs text-white/50 mt-2">Plaina 1 | 24 horas | {processes.length} processos</p>
+          </div>
+          <div className="text-xs text-white/50 font-mono">
+            Fonte: <span className="text-white/70">processos_analisados</span> + <span className="text-white/70">schedule_otimizado</span>
+          </div>
         </motion.div>
 
         {/* KPIs do Cronograma (sequência + materiais + recursos) */}
-        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <p className="text-slate-400 text-sm mb-1">Entregas até Jan/2027</p>
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10">
+          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Entregas até Jan/2027</p>
             <p className="text-3xl font-bold">
               {scheduleSummary ? `${scheduleSummary.ordersDeliveredByJan2027}/${scheduleSummary.ordersTotal}` : '—'}
             </p>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-xs text-white/50 mt-2">
               {scheduleSummary ? `${scheduleSummary.deliveriesPctByJan2027.toFixed(1)}%` : 'Carregando cronograma…'}
             </p>
           </div>
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <p className="text-slate-400 text-sm mb-1">Makespan (fim total)</p>
+          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Makespan (fim total)</p>
             <p className="text-2xl font-bold">
               {scheduleSummary?.makespanDate ? scheduleSummary.makespanDate.toLocaleDateString('pt-BR') : '—'}
             </p>
-            <p className="text-xs text-slate-500 mt-1">Conclusão do plano</p>
+            <p className="text-xs text-white/50 mt-2">Conclusão do plano</p>
           </div>
-          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
-            <p className="text-green-400 text-sm mb-1">No Prazo (vs prazo)</p>
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-emerald-200/80 text-xs tracking-wider uppercase mb-2">No Prazo (vs prazo)</p>
             <p className="text-3xl font-bold">{scheduleSummary ? scheduleSummary.onTimeOrders : '—'}</p>
-            <p className="text-xs text-slate-500 mt-1">Ordens dentro do prazo</p>
+            <p className="text-xs text-white/50 mt-2">Ordens dentro do prazo</p>
           </div>
-          <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-            <p className="text-red-400 text-sm mb-1">Atrasadas (vs prazo)</p>
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-rose-200/80 text-xs tracking-wider uppercase mb-2">Atrasadas (vs prazo)</p>
             <p className="text-3xl font-bold">{scheduleSummary ? scheduleSummary.lateOrders : '—'}</p>
-            <p className="text-xs text-slate-500 mt-1">Ordens fora do prazo</p>
+            <p className="text-xs text-white/50 mt-2">Ordens fora do prazo</p>
           </div>
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <p className="text-slate-400 text-sm mb-1">Maior carga (setor)</p>
+          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Maior carga (setor)</p>
             <p className="text-xl font-bold truncate">{scheduleSummary?.topBottleneck?.process ?? '—'}</p>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-xs text-white/50 mt-2">
               {scheduleSummary?.topBottleneck ? `${Math.round(scheduleSummary.topBottleneck.hours)}h · máx ${scheduleSummary.topBottleneck.maxOverlap} simult.` : ''}
             </p>
           </div>
         </motion.div>
 
         {/* Cronograma: entregas por mês + carga/congestionamento por setor */}
-        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <motion.div variants={itemVariants} className="lg:col-span-1 bg-slate-800 border border-slate-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold mb-4">Entregas por Mês</h2>
-            <div className="bg-slate-900 p-4 rounded-lg h-80">
+        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
+          <motion.div variants={itemVariants} className="lg:col-span-1 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Entregas por Mês</h2>
+              <div className="text-xs text-white/40 font-mono">dd/mm</div>
+            </div>
+            <div className="bg-black/20 border border-white/10 p-4 rounded-2xl h-80">
               <Bar data={deliveriesByMonthChartData} options={barOptions} />
             </div>
           </motion.div>
 
-          <motion.div variants={itemVariants} className="lg:col-span-2 bg-slate-800 border border-slate-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold mb-4">Carga e Congestionamento por Setor</h2>
-            <p className="text-slate-400 text-sm mb-3">Carga = horas totais. Congestionamento = máximo de operações simultâneas (proxy).</p>
-            <div className="bg-slate-900 p-4 rounded-lg h-80">
+          <motion.div variants={itemVariants} className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold">Carga e Congestionamento por Setor</h2>
+              <div className="text-xs text-white/40">horas + simultaneidade</div>
+            </div>
+            <p className="text-white/60 text-sm mb-3">Carga = horas totais. Congestionamento = máximo de operações simultâneas (proxy).</p>
+            <div className="bg-black/20 border border-white/10 p-4 rounded-2xl h-80">
               <Bar data={workloadByProcessChartData} options={barOptions} />
             </div>
           </motion.div>
         </motion.div>
 
         {/* Fluxo (Gantt) — Sequenciamento por Setor */}
-        <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
               <h2 className="text-xl font-bold">Fluxo de Produção (Gantt)</h2>
@@ -681,7 +699,7 @@ export default function DashboardPage() {
           </div>
 
           {/* single scrollable container; sticky left + sticky header */}
-          <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+          <div className="bg-black/20 rounded-2xl border border-white/10 overflow-hidden">
             <div className="max-h-[600px] overflow-y-auto">
               <div ref={ganttScrollRef} className="overflow-x-auto">
                 {ganttModel ? (
@@ -845,52 +863,61 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* KPI Cards */}
-        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-            <p className="text-slate-400 text-sm mb-1">Total Processos</p>
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Total Processos</p>
             <p className="text-3xl font-bold">{processes.length}</p>
           </div>
-          <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-            <p className="text-red-400 text-sm mb-1">Críticos</p>
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-rose-200/80 text-xs tracking-wider uppercase mb-2">Críticos</p>
             <p className="text-3xl font-bold">{impactCounts.high}</p>
           </div>
-          <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-4">
-            <p className="text-amber-400 text-sm mb-1">Atenção</p>
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-amber-200/80 text-xs tracking-wider uppercase mb-2">Atenção</p>
             <p className="text-3xl font-bold">{impactCounts.medium}</p>
           </div>
-          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
-            <p className="text-green-400 text-sm mb-1">Fluidos</p>
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-emerald-200/80 text-xs tracking-wider uppercase mb-2">Fluidos</p>
             <p className="text-3xl font-bold">{impactCounts.low}</p>
           </div>
         </motion.div>
 
         {/* Filter */}
-        <motion.div variants={itemVariants} className="mb-8">
-          <select
-            value={impactoFilter}
-            onChange={(e) => setImpactoFilter(e.target.value)}
-            className="bg-slate-700 border border-slate-600 text-white px-4 py-2 rounded-lg focus:outline-none focus:border-blue-500"
-          >
-            <option value="all">Todos os impactos</option>
-            <option value="Alto impacto (gargalo crítico)">Alto impacto</option>
-            <option value="Médio impacto (atenção)">Médio impacto</option>
-            <option value="Baixo impacto (fluido)">Baixo impacto</option>
-          </select>
+        <motion.div variants={itemVariants} className="mb-10">
+          <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-3 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <div className="text-xs text-white/50 tracking-wider uppercase">Filtro</div>
+            <select
+              value={impactoFilter}
+              onChange={(e) => setImpactoFilter(e.target.value)}
+              className="bg-black/20 border border-white/10 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-white/30"
+            >
+              <option value="all">Todos os impactos</option>
+              <option value="Alto impacto (gargalo crítico)">Alto impacto</option>
+              <option value="Médio impacto (atenção)">Médio impacto</option>
+              <option value="Baixo impacto (fluido)">Baixo impacto</option>
+            </select>
+          </div>
         </motion.div>
 
         {/* Main Grid: Charts + Heatmap */}
-        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <motion.div variants={containerVariants} initial="hidden" animate="visible" className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
           {/* Produção: Bar Chart */}
-          <motion.div variants={itemVariants} className="lg:col-span-2 bg-slate-800 border border-slate-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold mb-4">Carga de Produção por Posto</h2>
-            <div className="bg-slate-900 p-4 rounded-lg h-80">
+          <motion.div variants={itemVariants} className="lg:col-span-2 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Carga de Produção por Posto</h2>
+              <div className="text-xs text-white/40">tempo médio + carga</div>
+            </div>
+            <div className="bg-black/20 border border-white/10 p-4 rounded-2xl h-80">
               <Bar data={barChartData} options={barOptions} />
             </div>
           </motion.div>
 
           {/* Distribuição: Pie Chart */}
-          <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold mb-4">Distribuição de Impactos</h2>
+          <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold">Distribuição de Impactos</h2>
+              <div className="text-xs text-white/40">alto / médio / baixo</div>
+            </div>
             <div className="flex justify-center h-80">
               <Pie data={pieData} options={pieOptions} />
             </div>
@@ -898,9 +925,9 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Radar Saturação */}
-        <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <h2 className="text-xl font-bold mb-4">Análise Multidimensional - Saturação do Sistema</h2>
-          <p className="text-slate-400 text-sm mb-6">Capacidade do sistema vs. Limites operacionais. Valores acima de 80% indicam saturação crítica.</p>
+          <p className="text-white/60 text-sm mb-6">Capacidade do sistema vs. Limites operacionais. Valores acima de 80% indicam saturação crítica.</p>
           
           {/* Grid de Métricas com Barras Animadas */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
@@ -911,10 +938,10 @@ export default function DashboardPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.1 }}
                 whileHover={{ scale: 1.05 }}
-                className="border border-slate-700 rounded-lg p-4"
+                className="border border-white/10 bg-black/20 rounded-2xl p-4"
               >
                 <p className="text-xs font-semibold text-slate-300 mb-3">{item.label}</p>
-                <div className="h-32 flex flex-col justify-end relative mb-3 bg-slate-900 rounded">
+                <div className="h-32 flex flex-col justify-end relative mb-3 bg-black/20 border border-white/10 rounded-2xl overflow-hidden">
                   <motion.div
                     initial={{ height: 0 }}
                     animate={{ height: `${item.value}%` }}
@@ -927,7 +954,7 @@ export default function DashboardPage() {
                           : 'bg-gradient-to-t from-green-600 to-green-500'
                     }`}
                   />
-                  <div className="absolute top-1 left-1 right-1 text-xs text-slate-400">80%</div>
+                  <div className="absolute top-1 left-2 right-2 text-xs text-white/40">80%</div>
                 </div>
                 <p className="text-2xl font-bold text-white text-center">{Math.round(item.value)}%</p>
                 <p className={`text-xs text-center mt-2 font-semibold ${
@@ -944,7 +971,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Legenda e Recomendações */}
-          <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4">
+          <div className="bg-black/20 border border-white/10 rounded-2xl p-4">
             <div className="grid grid-cols-3 gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 bg-green-500 rounded"></div>
@@ -963,9 +990,9 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Fluxo Distribuição */}
-        <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <h2 className="text-xl font-bold mb-4">⚡ Otimização de Fluxo - Reordenação Dinâmica</h2>
-          <p className="text-slate-400 text-sm mb-4">Visualização de tempo por processo com recomendação de ordem ótima</p>
+          <p className="text-white/60 text-sm mb-4">Visualização de tempo por processo com recomendação de ordem ótima</p>
           
           {/* Impacto da Otimização */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -985,7 +1012,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Gráfico de Tempo */}
-          <div className="bg-slate-900 p-4 rounded-lg h-80 mb-6">
+          <div className="bg-black/20 border border-white/10 p-4 rounded-2xl h-80 mb-6">
             <Line data={fluxoChartData} options={lineOptions} />
           </div>
 
@@ -1017,17 +1044,17 @@ export default function DashboardPage() {
           </div>
 
           {/* Top 3 Críticos */}
-          <div className="mt-6 bg-red-900/20 border border-red-600 rounded-lg p-4">
+          <div className="mt-6 bg-rose-400/10 border border-rose-400/20 rounded-2xl p-4">
             <h3 className="font-bold text-red-400 mb-3">Top 3 Processos Críticos (Ação Imediata)</h3>
             <div className="space-y-2">
               {filtered
                 .sort((a, b) => b.BottleneckScore - a.BottleneckScore)
                 .slice(0, 3)
                 .map((item, idx) => (
-                  <div key={`critical-${idx}`} className="flex justify-between items-center bg-slate-800 p-3 rounded">
+                  <div key={`critical-${idx}`} className="flex justify-between items-center bg-black/20 border border-white/10 p-3 rounded-2xl">
                     <div>
                       <p className="font-semibold text-white">{idx + 1}. {item.Posto}</p>
-                      <p className="text-xs text-slate-400">Score: {item.BottleneckScore.toFixed(3)} | Tempo: {item.Tempo}h | Ordem Ótima: #{item.OrdemOtima}</p>
+                      <p className="text-xs text-white/50">Score: {item.BottleneckScore.toFixed(3)} | Tempo: {item.Tempo}h | Ordem Ótima: #{item.OrdemOtima}</p>
                     </div>
                     <motion.div
                       whileHover={{ scale: 1.1 }}
@@ -1042,11 +1069,11 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Tabela Detalhada */}
-        <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <h3 className="text-xl font-bold mb-4">Tabela de Processos (Top 25)</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="border-b border-slate-700">
+              <thead className="border-b border-white/10">
                 <tr>
                   <th className="text-left py-2 px-2">Posto</th>
                   <th className="text-center py-2 px-2">Tempo (h)</th>
@@ -1059,13 +1086,13 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {filtered.slice(0, 25).map((item) => (
-                  <tr key={`${item.Posto}-${item.RankGargalo}`} className="border-b border-slate-700 hover:bg-slate-700/50">
+                  <tr key={`${item.Posto}-${item.RankGargalo}`} className="border-b border-white/10 hover:bg-white/5">
                     <td className="py-2 px-2 font-medium">{item.Posto}</td>
                     <td className="text-center py-2 px-2">{item.Tempo}</td>
                     <td className="text-center py-2 px-2">{item.Fila}</td>
                     <td className="text-center py-2 px-2">{item.Dependencias}</td>
                     <td className="text-center py-2 px-2">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${colorMap[item.Impacto as keyof typeof colorMap] || 'bg-gray-700 text-gray-200'}`}>
+                      <span className={`px-2 py-1 rounded-xl text-xs font-semibold ${colorMap[item.Impacto as keyof typeof colorMap] || 'bg-gray-700 text-gray-200'}`}>
                         {item.Impacto.split('(')[0].trim()}
                       </span>
                     </td>
@@ -1079,7 +1106,7 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Footer */}
-        <motion.div variants={itemVariants} className="text-center text-slate-500 text-sm">
+        <motion.div variants={itemVariants} className="text-center text-white/40 text-sm pb-6">
           <p>Dashboard VOTH © 2026 - Otimização de Processos</p>
         </motion.div>
       </motion.div>
