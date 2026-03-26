@@ -73,6 +73,8 @@ export default function DashboardPage() {
   const [impactoFilter, setImpactoFilter] = useState<string>('all');
   const [scheduleOps, setScheduleOps] = useState<ScheduleOp[]>([]);
   const [scheduleSummary, setScheduleSummary] = useState<ScheduleSummary | null>(null);
+  const [ganttZoom, setGanttZoom] = useState<'all' | 'apr-jun' | 'jul-oct'>('all');
+  const [hoveredOp, setHoveredOp] = useState<ScheduleOp | null>(null);
 
   useEffect(() => {
     fetch('/processos_analisados.json')
@@ -434,6 +436,94 @@ export default function DashboardPage() {
     };
   }, [scheduleSummary]);
 
+  const ganttModel = useMemo(() => {
+    if (!scheduleOps.length) return null;
+
+    const parseDate = (s: string) => {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const rowsByProcess = new Map<string, Array<ScheduleOp & { startMs: number; endMs: number }>>();
+    let minMs = Number.POSITIVE_INFINITY;
+    let maxMs = 0;
+
+    for (const op of scheduleOps) {
+      const s = parseDate(op.start);
+      const e = parseDate(op.end);
+      if (!s || !e) continue;
+      const startMs = s.getTime();
+      const endMs = e.getTime();
+      minMs = Math.min(minMs, startMs);
+      maxMs = Math.max(maxMs, endMs);
+      const arr = rowsByProcess.get(op.process) ?? [];
+      arr.push({ ...op, startMs, endMs });
+      rowsByProcess.set(op.process, arr);
+    }
+
+    const processes = Array.from(rowsByProcess.keys()).sort((a, b) => a.localeCompare(b));
+    for (const p of processes) {
+      rowsByProcess.get(p)!.sort((a, b) => a.startMs - b.startMs);
+    }
+
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const floorToDay = (ms: number) => Math.floor(ms / msPerDay) * msPerDay;
+    const ceilToDay = (ms: number) => Math.ceil(ms / msPerDay) * msPerDay;
+
+    const fullStartMs = floorToDay(minMs);
+    const fullEndMs = ceilToDay(maxMs);
+
+    const pickRange = () => {
+      if (ganttZoom === 'all') return { startMs: fullStartMs, endMs: fullEndMs };
+      // schedule starts in 2026; keep year generic for safety
+      const year = new Date(fullStartMs).getFullYear();
+      if (ganttZoom === 'apr-jun') {
+        return { startMs: new Date(year, 3, 1).getTime(), endMs: new Date(year, 6, 1).getTime() }; // Apr 1 → Jul 1
+      }
+      return { startMs: new Date(year, 6, 1).getTime(), endMs: new Date(year, 10, 1).getTime() }; // Jul 1 → Nov 1
+    };
+
+    const { startMs, endMs } = pickRange();
+    const days = Math.max(1, Math.round((endMs - startMs) / msPerDay));
+    const dayWidth = ganttZoom === 'all' ? 10 : 18;
+
+    const dayLabels: string[] = [];
+    for (let i = 0; i <= days; i++) {
+      const d = new Date(startMs + i * msPerDay);
+      dayLabels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+
+    return {
+      processes,
+      rowsByProcess,
+      startMs,
+      endMs,
+      days,
+      dayWidth,
+      dayLabels,
+      msPerDay
+    };
+  }, [scheduleOps, ganttZoom]);
+
+  const ganttColorForProcess = (p: string) => {
+    const map: Record<string, string> = {
+      Solda: '#93c5fd',
+      CT: '#c4b5fd',
+      Fresadora: '#fdba74',
+      Corte: '#fca5a5',
+      Montagem: '#86efac',
+      Rebarba: '#fde68a',
+      Plaina: '#f5d0fe',
+      'Trat. Sup.': '#a7f3d0',
+      'Peq. Usin.': '#fbcfe8',
+      'Eng Man': '#67e8f9',
+      Traçagem: '#fda4af',
+      Qualidade: '#bae6fd',
+      'Serv. Ext.': '#cbd5e1'
+    };
+    return map[p] ?? '#94a3b8';
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
       <motion.div className="max-w-7xl mx-auto" variants={containerVariants} initial="hidden" animate="visible">
@@ -497,6 +587,164 @@ export default function DashboardPage() {
               <Bar data={workloadByProcessChartData} options={barOptions} />
             </div>
           </motion.div>
+        </motion.div>
+
+        {/* Fluxo (Gantt) — Sequenciamento por Setor */}
+        <motion.div variants={itemVariants} className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <div>
+              <h2 className="text-xl font-bold">Fluxo de Produção (Gantt)</h2>
+              <p className="text-slate-400 text-sm">Sequência por setor baseada no cronograma otimizado.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setGanttZoom('all')}
+                className={`px-3 py-2 rounded-lg border text-xs font-semibold transition ${
+                  ganttZoom === 'all' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-500'
+                }`}
+              >
+                Visão Geral
+              </button>
+              <button
+                onClick={() => setGanttZoom('apr-jun')}
+                className={`px-3 py-2 rounded-lg border text-xs font-semibold transition ${
+                  ganttZoom === 'apr-jun' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-500'
+                }`}
+              >
+                Abr–Jun
+              </button>
+              <button
+                onClick={() => setGanttZoom('jul-oct')}
+                className={`px-3 py-2 rounded-lg border text-xs font-semibold transition ${
+                  ganttZoom === 'jul-oct' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-500'
+                }`}
+              >
+                Jul–Out
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+            <div className="flex">
+              {/* Left labels */}
+              <div className="w-44 shrink-0 border-r border-slate-700">
+                <div className="h-10 px-3 flex items-center text-xs text-slate-400 border-b border-slate-700">PROCESSO</div>
+                <div className="max-h-[460px] overflow-y-auto">
+                  {ganttModel?.processes.map((p) => (
+                    <div key={`lbl-${p}`} className="h-10 px-3 flex items-center border-b border-slate-800 text-sm">
+                      <span className="truncate">{p}</span>
+                    </div>
+                  )) ?? (
+                    <div className="h-10 px-3 flex items-center text-sm text-slate-400">Carregando…</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div className="flex-1 overflow-x-auto">
+                <div
+                  className="min-w-max"
+                  style={{ width: ganttModel ? (ganttModel.days + 1) * ganttModel.dayWidth : 800 }}
+                >
+                  {/* Header days */}
+                  <div className="h-10 border-b border-slate-700 flex sticky top-0 bg-slate-900/90 backdrop-blur">
+                    {ganttModel?.dayLabels.map((d, idx) => (
+                      <div
+                        key={`day-${idx}`}
+                        className="text-[10px] text-slate-400 flex items-center justify-center border-r border-slate-800"
+                        style={{ width: ganttModel.dayWidth }}
+                      >
+                        {idx % (ganttZoom === 'all' ? 7 : 3) === 0 ? d : ''}
+                      </div>
+                    )) ?? <div className="text-xs text-slate-400 px-3 flex items-center">—</div>}
+                  </div>
+
+                  {/* Rows */}
+                  <div className="max-h-[460px] overflow-y-auto">
+                    {ganttModel?.processes.map((p) => {
+                      const ops = ganttModel.rowsByProcess.get(p) ?? [];
+                      return (
+                        <div key={`row-${p}`} className="h-10 border-b border-slate-800 relative">
+                          {/* Grid vertical lines */}
+                          <div className="absolute inset-0 flex pointer-events-none">
+                            {ganttModel.dayLabels.map((_, idx) => (
+                              <div
+                                key={`grid-${p}-${idx}`}
+                                className="border-r border-slate-800/60"
+                                style={{ width: ganttModel.dayWidth }}
+                              />
+                            ))}
+                          </div>
+
+                          {/* Bars */}
+                          {ops.map((op, i) => {
+                            const leftDays = (op.startMs - ganttModel.startMs) / ganttModel.msPerDay;
+                            const widthDays = Math.max(0.2, (op.endMs - op.startMs) / ganttModel.msPerDay);
+                            const left = leftDays * ganttModel.dayWidth;
+                            const width = widthDays * ganttModel.dayWidth;
+                            const bg = ganttColorForProcess(p);
+
+                            return (
+                              <div
+                                key={`bar-${p}-${op.order_id}-${op.seq}-${i}`}
+                                className="absolute top-1.5 h-7 rounded-md border border-black/10 shadow-sm cursor-pointer"
+                                style={{
+                                  left,
+                                  width,
+                                  backgroundColor: bg,
+                                  opacity: op.late ? 0.85 : 0.95
+                                }}
+                                onMouseEnter={() => setHoveredOp(op)}
+                                onMouseLeave={() => setHoveredOp(null)}
+                                title={`${op.equipment} · OP ${op.order_id} · Seq ${op.seq}`}
+                              >
+                                <div className="px-2 text-[11px] text-slate-900 font-semibold truncate leading-7">
+                                  {op.equipment || `OP ${op.order_id}`}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }) ?? null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {hoveredOp && (
+            <div className="mt-4 bg-slate-900/70 border border-slate-700 rounded-lg p-4 text-sm">
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                <div>
+                  <div className="text-slate-400 text-xs">Equipamento</div>
+                  <div className="font-semibold">{hoveredOp.equipment}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Ordem</div>
+                  <div className="font-semibold">{hoveredOp.order_id}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Setor</div>
+                  <div className="font-semibold">{hoveredOp.process}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Início</div>
+                  <div className="font-semibold">{new Date(hoveredOp.start).toLocaleString('pt-BR')}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Fim</div>
+                  <div className="font-semibold">{new Date(hoveredOp.end).toLocaleString('pt-BR')}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400 text-xs">Prazo</div>
+                  <div className={`font-semibold ${hoveredOp.late ? 'text-red-400' : 'text-green-400'}`}>
+                    {hoveredOp.deadline ? new Date(hoveredOp.deadline).toLocaleDateString('pt-BR') : '—'} {hoveredOp.late ? '(atraso)' : '(ok)'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </motion.div>
 
         {/* KPI Cards */}
