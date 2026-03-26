@@ -253,12 +253,18 @@ export default function DashboardPage() {
       }
     }
 
+    const windowStart = new Date('2026-04-01T00:00:00');
     const cutoff = new Date('2027-01-31T23:59:59');
     const finishes = Array.from(orderEnd.entries());
     finishes.sort((a, b) => a[1].getTime() - b[1].getTime());
 
-    const ordersTotal = finishes.length;
-    const ordersDeliveredByJan2027 = finishes.filter(([, dt]) => dt.getTime() <= cutoff.getTime()).length;
+    // Count window requested by user: Apr/2026 -> Jan/2027
+    const finishesInWindow = finishes.filter(
+      ([, dt]) => dt.getTime() >= windowStart.getTime() && dt.getTime() <= cutoff.getTime()
+    );
+
+    const ordersTotal = finishesInWindow.length;
+    const ordersDeliveredByJan2027 = finishesInWindow.length;
     const deliveriesPctByJan2027 = ordersTotal ? (ordersDeliveredByJan2027 / ordersTotal) * 100 : 0;
     const makespanDate = finishes.length ? finishes[finishes.length - 1][1] : undefined;
 
@@ -273,7 +279,7 @@ export default function DashboardPage() {
 
     // Deliveries by month
     const byMonth = new Map<string, number>();
-    for (const [, dt] of finishes) {
+    for (const [, dt] of finishesInWindow) {
       const month = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
       byMonth.set(month, (byMonth.get(month) ?? 0) + 1);
     }
@@ -692,7 +698,7 @@ export default function DashboardPage() {
         {/* KPIs do Cronograma (sequência + materiais + recursos) */}
         <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10">
           <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
-            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Entregas até Jan/2027</p>
+            <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Entregas (Abr/2026 a Jan/2027)</p>
             <p className="text-3xl font-bold">
               {scheduleSummary ? `${scheduleSummary.ordersDeliveredByJan2027}/${scheduleSummary.ordersTotal}` : '—'}
             </p>
