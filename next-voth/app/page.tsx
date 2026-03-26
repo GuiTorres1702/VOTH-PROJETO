@@ -54,6 +54,9 @@ type ScheduleSummary = {
   onTimeOrders: number;
   lateOrders: number;
   deliveriesByMonth: Array<{ month: string; count: number }>;
+  feasibilityByMonth: Array<{ month: string; demand: number; feasible: number; infeasibleMaterial: number }>;
+  infeasibleMaterialOrders: number;
+  adjustedOnTimePct: number;
   workloadByProcess: Array<{ process: string; hours: number; maxOverlap: number }>;
   topBottleneck?: { process: string; hours: number; maxOverlap: number };
 };
@@ -75,6 +78,21 @@ const BAR_H = 26; // bar height in px
 const LANE_H = 34; // vertical space per lane (BAR_H + padding)
 const ROW_PAD_TOP = 8; // top padding inside each process row
 const ROW_MIN_H = 52; // minimum row height even with 1 lane
+const PROCESS_CAPACITY: Record<string, number> = {
+  Corte: 1,
+  CT: 1,
+  'Eng Man': 3,
+  Fresadora: 1,
+  Montagem: 8,
+  'Peq. Usin.': 1,
+  Qualidade: 3,
+  Rebarba: 1,
+  'Serv. Ext.': 99,
+  Solda: 5,
+  Traçagem: 1,
+  'Trat. Sup.': 1,
+  Plaina: 1
+};
 
 export default function DashboardPage() {
   const [processes, setProcesses] = useState<Process[]>([]);
@@ -239,12 +257,18 @@ export default function DashboardPage() {
 
     // Per-order completion (max end)
     const orderEnd = new Map<string, Date>();
+    const orderStart = new Map<string, Date>();
     const orderDeadline = new Map<string, Date>();
     for (const op of displayedScheduleOps) {
       const end = parseDate(op.end);
+      const start = parseDate(op.start);
       if (end) {
         const prev = orderEnd.get(op.order_id);
         if (!prev || end.getTime() > prev.getTime()) orderEnd.set(op.order_id, end);
+      }
+      if (start) {
+        const prev = orderStart.get(op.order_id);
+        if (!prev || start.getTime() < prev.getTime()) orderStart.set(op.order_id, start);
       }
       const dl = op.deadline ? parseDate(op.deadline) : null;
       if (dl) {
@@ -258,34 +282,75 @@ export default function DashboardPage() {
     const finishes = Array.from(orderEnd.entries());
     finishes.sort((a, b) => a[1].getTime() - b[1].getTime());
 
-    // Count window requested by user: Apr/2026 -> Jan/2027
-    const finishesInWindow = finishes.filter(
-      ([, dt]) => dt.getTime() >= windowStart.getTime() && dt.getTime() <= cutoff.getTime()
-    );
+    // Business view: consider pedidos by deadline month (demanda mensal),
+    // e avaliar atendimento dentro da janela Abr/2026 -> Jan/2027.
+    const ordersInWindow = finishes.filter(([oid]) => {
+      const dl = orderDeadline.get(oid);
+      if (!dl) return false;
+      return dl.getTime() >= windowStart.getTime() && dl.getTime() <= cutoff.getTime();
+    });
 
-    const ordersTotal = finishesInWindow.length;
-    const ordersDeliveredByJan2027 = finishesInWindow.length;
+    const ordersTotal = ordersInWindow.length;
+    const ordersDeliveredByJan2027 = ordersInWindow.filter(([, finishDt]) => finishDt.getTime() <= cutoff.getTime()).length;
     const deliveriesPctByJan2027 = ordersTotal ? (ordersDeliveredByJan2027 / ordersTotal) * 100 : 0;
     const makespanDate = finishes.length ? finishes[finishes.length - 1][1] : undefined;
 
     let onTimeOrders = 0;
     let lateOrders = 0;
-    for (const [oid, finish] of finishes) {
+    for (const [oid, finish] of ordersInWindow) {
       const dl = orderDeadline.get(oid);
       if (!dl) continue;
       if (finish.getTime() <= dl.getTime()) onTimeOrders += 1;
       else lateOrders += 1;
     }
 
-    // Deliveries by month
+    // Proxy for material infeasibility (since JSON has no material date):
+    // if first operation starts after deadline, order is infeasible at origin.
+    const infeasibleSet = new Set<string>();
+    for (const [oid] of ordersInWindow) {
+      const dl = orderDeadline.get(oid);
+      const st = orderStart.get(oid);
+      if (dl && st && st.getTime() > dl.getTime()) infeasibleSet.add(oid);
+    }
+    const infeasibleMaterialOrders = infeasibleSet.size;
+    const feasibleOrders = Math.max(0, ordersTotal - infeasibleMaterialOrders);
+    const onTimeFeasible = ordersInWindow.filter(([oid, finish]) => {
+      if (infeasibleSet.has(oid)) return false;
+      const dl = orderDeadline.get(oid);
+      return !!dl && finish.getTime() <= dl.getTime();
+    }).length;
+    const adjustedOnTimePct = feasibleOrders ? (onTimeFeasible / feasibleOrders) * 100 : 0;
+
+    // Monthly demand by deadline month (e.g. abril = 24 pedidos)
     const byMonth = new Map<string, number>();
-    for (const [, dt] of finishesInWindow) {
-      const month = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    for (const [oid] of ordersInWindow) {
+      const dl = orderDeadline.get(oid);
+      if (!dl) continue;
+      const month = `${dl.getFullYear()}-${String(dl.getMonth() + 1).padStart(2, '0')}`;
       byMonth.set(month, (byMonth.get(month) ?? 0) + 1);
     }
     const deliveriesByMonth = Array.from(byMonth.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([month, count]) => ({ month, count }));
+
+    const feasibilityMap = new Map<string, { demand: number; infeasibleMaterial: number }>();
+    for (const [oid] of ordersInWindow) {
+      const dl = orderDeadline.get(oid);
+      if (!dl) continue;
+      const month = `${dl.getFullYear()}-${String(dl.getMonth() + 1).padStart(2, '0')}`;
+      const cur = feasibilityMap.get(month) ?? { demand: 0, infeasibleMaterial: 0 };
+      cur.demand += 1;
+      if (infeasibleSet.has(oid)) cur.infeasibleMaterial += 1;
+      feasibilityMap.set(month, cur);
+    }
+    const feasibilityByMonth = Array.from(feasibilityMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([month, v]) => ({
+        month,
+        demand: v.demand,
+        feasible: Math.max(0, v.demand - v.infeasibleMaterial),
+        infeasibleMaterial: v.infeasibleMaterial
+      }));
 
     // Workload by process + max overlap (proxy for congestion)
     const workHours = new Map<string, number>();
@@ -328,6 +393,9 @@ export default function DashboardPage() {
       onTimeOrders,
       lateOrders,
       deliveriesByMonth,
+      feasibilityByMonth,
+      infeasibleMaterialOrders,
+      adjustedOnTimePct,
       workloadByProcess: workloadByProcess.slice(0, 12),
       topBottleneck
     };
@@ -527,6 +595,21 @@ export default function DashboardPage() {
     };
   }, [scheduleSummary]);
 
+  const feasibilityByMonthChartData = useMemo(() => {
+    const labels = scheduleSummary?.feasibilityByMonth.map((d) => d.month) ?? [];
+    const demand = scheduleSummary?.feasibilityByMonth.map((d) => d.demand) ?? [];
+    const feasible = scheduleSummary?.feasibilityByMonth.map((d) => d.feasible) ?? [];
+    const infeasible = scheduleSummary?.feasibilityByMonth.map((d) => d.infeasibleMaterial) ?? [];
+    return {
+      labels,
+      datasets: [
+        { label: 'Demanda (prazo no mês)', data: demand, backgroundColor: '#64748b', borderRadius: 6 },
+        { label: 'Viáveis', data: feasible, backgroundColor: '#22c55e', borderRadius: 6 },
+        { label: 'Inviáveis na origem*', data: infeasible, backgroundColor: '#ef4444', borderRadius: 6 }
+      ]
+    };
+  }, [scheduleSummary]);
+
   const workloadByProcessChartData = useMemo(() => {
     const items = scheduleSummary?.workloadByProcess ?? [];
     return {
@@ -548,8 +631,93 @@ export default function DashboardPage() {
     };
   }, [scheduleSummary]);
 
+  const historicalTracker = useMemo(() => {
+    const parseDate = (s: string) => {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const before = new Map<string, { start: Date | null; end: Date | null; process: string; equipment: string }>();
+    const after = new Map<string, { start: Date | null; end: Date | null; process: string; equipment: string }>();
+
+    for (const op of baselineExcelOps) {
+      const key = `${op.order_id}::${op.seq}`;
+      before.set(key, { start: parseDate(op.start), end: parseDate(op.end), process: op.process, equipment: op.equipment });
+    }
+    for (const op of scheduleOps) {
+      const key = `${op.order_id}::${op.seq}`;
+      after.set(key, { start: parseDate(op.start), end: parseDate(op.end), process: op.process, equipment: op.equipment });
+    }
+
+    let advanced = 0;
+    let delayed = 0;
+    let unchanged = 0;
+    let processChanged = 0;
+    let newOps = 0;
+    let removedOps = 0;
+    const rows: Array<{
+      key: string;
+      orderId: string;
+      seq: number;
+      equipment: string;
+      processBefore: string;
+      processAfter: string;
+      startDeltaDays: number;
+      endDeltaDays: number;
+      status: 'adiantou' | 'atrasou' | 'sem alteração';
+    }> = [];
+
+    for (const [key, b] of before.entries()) {
+      const a = after.get(key);
+      if (!a) {
+        removedOps += 1;
+        continue;
+      }
+      const [orderId, seqStr] = key.split('::');
+      const seq = Number(seqStr);
+      const startDeltaDays = b.start && a.start ? (a.start.getTime() - b.start.getTime()) / 86400000 : 0;
+      const endDeltaDays = b.end && a.end ? (a.end.getTime() - b.end.getTime()) / 86400000 : 0;
+      if (Math.abs(endDeltaDays) < 1 / 24) unchanged += 1;
+      else if (endDeltaDays < 0) advanced += 1;
+      else delayed += 1;
+      if (b.process !== a.process) processChanged += 1;
+
+      rows.push({
+        key,
+        orderId,
+        seq,
+        equipment: a.equipment || b.equipment,
+        processBefore: b.process,
+        processAfter: a.process,
+        startDeltaDays,
+        endDeltaDays,
+        status: Math.abs(endDeltaDays) < 1 / 24 ? 'sem alteração' : endDeltaDays < 0 ? 'adiantou' : 'atrasou'
+      });
+    }
+
+    for (const key of after.keys()) {
+      if (!before.has(key)) newOps += 1;
+    }
+
+    rows.sort((x, y) => Math.abs(y.endDeltaDays) - Math.abs(x.endDeltaDays));
+    return { advanced, delayed, unchanged, processChanged, newOps, removedOps, rows: rows.slice(0, 20) };
+  }, [baselineExcelOps, scheduleOps]);
+
   const ganttModel = useMemo(() => {
-    if (!displayedScheduleOps.length) return null;
+    if (!displayedScheduleOps.length) {
+      return {
+        processes: [] as string[],
+        rowsByProcess: new Map<string, Array<ScheduleOp & { startMs: number; endMs: number; lane: number }>>(),
+        laneCountByProcess: new Map<string, number>(),
+        startMs: 0,
+        endMs: 0,
+        days: 1,
+        dayWidth: ganttZoom === 'all' ? 20 : 32,
+        dayLabels: [] as string[],
+        msPerDay: 24 * 60 * 60 * 1000,
+        labelEvery: ganttZoom === 'all' ? 7 : 3
+      };
+    }
 
     const parseDate = (s: string) => {
       const d = new Date(s);
@@ -600,7 +768,11 @@ export default function DashboardPage() {
         out.push({ ...op, lane });
       }
       rowsByProcess.set(p, out);
-      laneCountByProcess.set(p, Math.max(1, laneEnds.length));
+      const configuredCapacity = PROCESS_CAPACITY[p] ?? 1;
+      // Show total points (capacity) in the UI, not only used overlap.
+      // For very large capacities (e.g., Serv. Ext. 99), cap visual lanes.
+      const visualCapacity = Math.min(configuredCapacity, 12);
+      laneCountByProcess.set(p, Math.max(1, visualCapacity, laneEnds.length));
     }
 
     const msPerDay = 24 * 60 * 60 * 1000;
@@ -672,6 +844,8 @@ export default function DashboardPage() {
   }, []);
 
   const fmtDdMm = (d: Date) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const hoveredOpSafe = hoveredOp as ScheduleOp;
+  const tooltipPosSafe = tooltipPos as { x: number; y: number };
 
   return (
     <div className="min-h-screen text-white">
@@ -696,7 +870,7 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* KPIs do Cronograma (sequência + materiais + recursos) */}
-        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-10">
+        <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-7 gap-4 mb-10">
           <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
             <p className="text-white/60 text-xs tracking-wider uppercase mb-2">Entregas (Abr/2026 a Jan/2027)</p>
             <p className="text-3xl font-bold">
@@ -730,6 +904,16 @@ export default function DashboardPage() {
               {scheduleSummary?.topBottleneck ? `${Math.round(scheduleSummary.topBottleneck.hours)}h · máx ${scheduleSummary.topBottleneck.maxOverlap} simult.` : ''}
             </p>
           </div>
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-rose-200/80 text-xs tracking-wider uppercase mb-2">Inviáveis na origem*</p>
+            <p className="text-3xl font-bold">{scheduleSummary ? scheduleSummary.infeasibleMaterialOrders : '—'}</p>
+            <p className="text-xs text-white/50 mt-2">Janela Abr/2026-Jan/2027</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 backdrop-blur-xl p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+            <p className="text-emerald-200/80 text-xs tracking-wider uppercase mb-2">On-time ajustado*</p>
+            <p className="text-3xl font-bold">{scheduleSummary ? `${scheduleSummary.adjustedOnTimePct.toFixed(1)}%` : '—'}</p>
+            <p className="text-xs text-white/50 mt-2">Exclui inviáveis na origem</p>
+          </div>
         </motion.div>
 
         {/* Cronograma: entregas por mês + carga/congestionamento por setor */}
@@ -756,7 +940,93 @@ export default function DashboardPage() {
           </motion.div>
         </motion.div>
 
-        {/* Fluxo (Gantt) — Sequenciamento por Setor */}
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-bold">Demanda Mensal x Viabilidade de Material</h2>
+            <div className="text-xs text-white/40">prazo por mês</div>
+          </div>
+          <div className="bg-black/20 border border-white/10 p-4 rounded-2xl h-80">
+            <Bar data={feasibilityByMonthChartData} options={barOptions} />
+          </div>
+          <p className="text-xs text-white/50 mt-3">
+            * Proxy atual: “inviável na origem” quando a primeira operação inicia após o prazo da ordem.
+          </p>
+        </motion.div>
+
+        {/* Historical tracker (change tracking) */}
+        <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold">Historical Plan Tracker</h2>
+              <p className="text-white/60 text-sm">Comparação entre Plano Base (Ordem do Excel) e Plano Otimizado.</p>
+            </div>
+            <div className="text-xs text-white/40">Before vs After</div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+            <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3">
+              <p className="text-xs text-emerald-200/80 uppercase tracking-wider">Adiantou</p>
+              <p className="text-2xl font-bold">{historicalTracker.advanced}</p>
+            </div>
+            <div className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-3">
+              <p className="text-xs text-rose-200/80 uppercase tracking-wider">Atrasou</p>
+              <p className="text-2xl font-bold">{historicalTracker.delayed}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-xs text-white/60 uppercase tracking-wider">Sem alteração</p>
+              <p className="text-2xl font-bold">{historicalTracker.unchanged}</p>
+            </div>
+            <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-3">
+              <p className="text-xs text-amber-200/80 uppercase tracking-wider">Mudou setor</p>
+              <p className="text-2xl font-bold">{historicalTracker.processChanged}</p>
+            </div>
+            <div className="rounded-xl border border-sky-400/20 bg-sky-400/10 p-3">
+              <p className="text-xs text-sky-200/80 uppercase tracking-wider">Novas ops</p>
+              <p className="text-2xl font-bold">{historicalTracker.newOps}</p>
+            </div>
+            <div className="rounded-xl border border-slate-400/20 bg-slate-400/10 p-3">
+              <p className="text-xs text-slate-200/80 uppercase tracking-wider">Removidas</p>
+              <p className="text-2xl font-bold">{historicalTracker.removedOps}</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-white/10 rounded-2xl">
+            <table className="w-full text-sm">
+              <thead className="border-b border-white/10 bg-black/20">
+                <tr>
+                  <th className="text-left py-2 px-3">OP/Seq</th>
+                  <th className="text-left py-2 px-3">Equipamento</th>
+                  <th className="text-left py-2 px-3">Setor (antes → depois)</th>
+                  <th className="text-right py-2 px-3">Δ início (dias)</th>
+                  <th className="text-right py-2 px-3">Δ fim (dias)</th>
+                  <th className="text-center py-2 px-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historicalTracker.rows.map((r) => (
+                  <tr key={r.key} className="border-b border-white/10 hover:bg-white/5">
+                    <td className="py-2 px-3 font-mono">{r.orderId}/{r.seq}</td>
+                    <td className="py-2 px-3">{r.equipment}</td>
+                    <td className="py-2 px-3">{r.processBefore} → {r.processAfter}</td>
+                    <td className="py-2 px-3 text-right">{r.startDeltaDays.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-right">{r.endDeltaDays.toFixed(1)}</td>
+                    <td className="py-2 px-3 text-center">
+                      <span className={`px-2 py-1 rounded-xl text-xs font-semibold ${
+                        r.status === 'adiantou' ? 'bg-emerald-400/20 text-emerald-300' :
+                        r.status === 'atrasou' ? 'bg-rose-400/20 text-rose-300' :
+                        'bg-white/10 text-white/70'
+                      }`}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
+
+        {false && (
         <motion.div variants={itemVariants} className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 mb-10 shadow-[0_20px_80px_rgba(0,0,0,0.45)]">
           <div className="flex items-center justify-between gap-4 mb-4">
             <div>
@@ -841,7 +1111,7 @@ export default function DashboardPage() {
                   });
                 }}
               >
-                <div style={{ width: ganttModel ? 208 + (ganttModel.days + 1) * ganttModel.dayWidth : 1200, height: 1 }} />
+                <div style={{ width: ganttModel ? 208 + ((ganttModel?.days ?? 0) + 1) * (ganttModel?.dayWidth ?? 1) : 1200, height: 1 }} />
               </div>
             </div>
 
@@ -890,6 +1160,7 @@ export default function DashboardPage() {
                     {ganttModel.processes.map((p, rowIdx) => {
                       const ops = ganttModel.rowsByProcess.get(p) ?? [];
                       const lanes = ganttModel.laneCountByProcess.get(p) ?? 1;
+                      const usedLanes = ops.length ? Math.max(...ops.map((o) => o.lane)) + 1 : 0;
                       const rowHeight = Math.max(ROW_MIN_H, ROW_PAD_TOP * 2 + lanes * LANE_H);
                       const zebra = rowIdx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60';
 
@@ -902,6 +1173,7 @@ export default function DashboardPage() {
                             <div className="flex items-center gap-2 min-w-0">
                               <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: ganttColorForProcess(p) }} />
                               <span className="text-sm font-semibold text-slate-100 truncate">{p}</span>
+                              <span className="text-[10px] text-white/50 shrink-0">{usedLanes}/{lanes}</span>
                             </div>
                           </div>
 
@@ -998,30 +1270,30 @@ export default function DashboardPage() {
           {hoveredOp && tooltipPos && (
             <div
               className="fixed z-[9999] pointer-events-none"
-              style={{ left: tooltipPos.x + 14, top: tooltipPos.y + 14 }}
+              style={{ left: tooltipPosSafe.x + 14, top: tooltipPosSafe.y + 14 }}
             >
               <div className="bg-slate-950/95 border border-slate-700 rounded-xl px-4 py-3 shadow-2xl max-w-[360px]">
-                <div className="text-sm font-extrabold text-slate-100 truncate">{hoveredOp.equipment || `OP ${hoveredOp.order_id}`}</div>
+                <div className="text-sm font-extrabold text-slate-100 truncate">{hoveredOpSafe.equipment || `OP ${hoveredOpSafe.order_id}`}</div>
                 <div className="text-[11px] text-slate-400 mt-1">
-                  <span className="text-slate-200 font-semibold">{hoveredOp.process}</span>
+                  <span className="text-slate-200 font-semibold">{hoveredOpSafe.process}</span>
                   <span className="mx-2 text-slate-600">•</span>
-                  OP <span className="text-slate-200 font-semibold">{hoveredOp.order_id}</span> · Seq {hoveredOp.seq}
+                  OP <span className="text-slate-200 font-semibold">{hoveredOpSafe.order_id}</span> · Seq {hoveredOpSafe.seq}
                 </div>
                 <div className="text-[11px] text-slate-400 mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div>
-                    <span className="text-slate-500">Início:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOp.start))}</span>
+                    <span className="text-slate-500">Início:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOpSafe.start))}</span>
                   </div>
                   <div>
-                    <span className="text-slate-500">Fim:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOp.end))}</span>
+                    <span className="text-slate-500">Fim:</span> <span className="text-slate-200">{fmtDdMm(new Date(hoveredOpSafe.end))}</span>
                   </div>
                   <div>
                     <span className="text-slate-500">Duração:</span>{' '}
-                    <span className="text-slate-200 font-semibold">{Number.isFinite(hoveredOp.duration) ? `${hoveredOp.duration.toFixed(1)}h` : '—'}</span>
+                    <span className="text-slate-200 font-semibold">{Number.isFinite(hoveredOpSafe.duration) ? `${hoveredOpSafe.duration.toFixed(1)}h` : '—'}</span>
                   </div>
                   <div>
                     <span className="text-slate-500">Prazo:</span>{' '}
-                    <span className={`font-semibold ${hoveredOp.late ? 'text-red-400' : 'text-green-400'}`}>
-                      {hoveredOp.deadline ? fmtDdMm(new Date(hoveredOp.deadline)) : '—'} {hoveredOp.late ? '⚠ atraso' : '✓ ok'}
+                    <span className={`font-semibold ${hoveredOpSafe.late ? 'text-red-400' : 'text-green-400'}`}>
+                      {hoveredOpSafe.deadline ? fmtDdMm(new Date(hoveredOpSafe.deadline)) : '—'} {hoveredOpSafe.late ? '⚠ atraso' : '✓ ok'}
                     </span>
                   </div>
                 </div>
@@ -1029,6 +1301,7 @@ export default function DashboardPage() {
             </div>
           )}
         </motion.div>
+        )}
 
         {/* KPI Cards */}
         <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
